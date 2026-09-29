@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bronze Pack Auto Opener (FC 27)
 // @namespace    http://tampermonkey.net/
-// @version      2026.2.1
+// @version      2026.2.2
 // @description  Automate bronze pack method opening on the FC 27 web app
 // @author       Kogilife
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
@@ -681,21 +681,26 @@
         await waitForSpinner();
 
         // wait for results (or an empty result)
+        const no_results = () => visible_all('.ut-no-results-view, [class*="no-results"]').length > 0;
         let prices = [];
         for (let waited = 0; waited < 8000; waited += 100) {
             prices = compare_rows().map(row_buy_now).filter(Boolean);
-            if (prices.length) break;
-            if (visible_all('.ut-no-results-view, [class*="no-results"]').length) break;
+            if (prices.length || no_results()) break;
             await poll(100);
         }
         await poll(200); // let the rest of the results land
-        prices = compare_rows().map(row_buy_now).filter(Boolean);
-        const lowest = prices.length ? Math.min(...prices) : null;
-        console.log(`${name}: ${prices.length} market listings, lowest Buy Now ${lowest == null ? 'none' : lowest.toLocaleString()}`);
-        if (!prices.length) {
-            const rows = compare_rows();
-            console.log(`Compare Price: ${rows.length} result rows found` + (rows[0] ? `, first row: ${rows[0].className} | ${text(rows[0]).replace(/\s+/g, ' ').slice(0, 120)}` : ''));
+        const rows = compare_rows();
+        prices = rows.map(row_buy_now).filter(Boolean);
+
+        if (!prices.length && !no_results()) {
+            // couldn't read the market: never guess, because a wrong guess means
+            // quick selling players that should have been listed
+            console.log(`Compare Price for ${name}: couldn't read any Buy Now prices from ${rows.length} rows.`);
+            rows.slice(0, 2).forEach((row, i) => console.log(`Result row ${i + 1} HTML:\n` + row.outerHTML.slice(0, 2000)));
+            throw new Error(`Couldn't read the Compare Price results for ${name}, so I stopped before selling anything. Please send Claude a screenshot of this screen and of the Console (F12).`);
         }
+        const lowest = prices.length ? Math.min(...prices) : null;
+        console.log(`${name}: ${prices.length} market listings, lowest Buy Now ${lowest == null ? 'none (no results)' : lowest.toLocaleString()}`);
 
         // back to the unassigned list
         if (visible_all(unassigned_section).length) {
@@ -1136,7 +1141,7 @@
     }
 
     function build_panel() {
-        panel = el('div', 'position:fixed;right:12px;bottom:12px;z-index:2147483647;width:250px;max-height:80vh;overflow:auto;' +
+        panel = el('div', 'position:fixed;left:12px;bottom:12px;z-index:2147483647;width:250px;max-height:80vh;overflow:auto;' +
             'padding:10px 12px;border-radius:8px;background:rgba(15,20,30,0.94);color:#fff;' +
             'font:12px/1.5 sans-serif;box-shadow:0 4px 16px rgba(0,0,0,0.4);');
         panel.id = 'bpao-panel';

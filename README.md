@@ -20,7 +20,7 @@ By Kogilife.
 ## Use
 
 1. In the web app go to **Store > Packs**, then select the **Classic Packs** tab.
-2. Click **Start** on the panel in the bottom right, or press **`-`** (not while typing in a text box).
+2. Click **Start** on the panel in the bottom left, or press **`-`** (not while typing in a text box).
 3. Click **Stop** or press **`=`** (or `+`) to stop. It stops after the current step finishes.
 4. When it stops, a popup shows why and a summary: packs opened, coins spent, players stored, items redeemed, and which managers went to the transfer list.
 
@@ -68,6 +68,10 @@ The bot stops, instead of quick selling something valuable, when:
 ## Changelog
 
 The version shows next to the panel title and in the console (F12) when the script loads.
+
+### 2026.2.2
+- Fixed silver mode quick selling every player: when it couldn't read the Compare Price results it treated players as having no listings. It now stops and leaves the players in Unassigned unless the screen actually says there are no results, and logs what the result rows look like in the console.
+- The panel moved to the bottom left so it doesn't cover the item details on the right.
 
 ### 2026.2.1
 - Fixed silver mode leaving everything unassigned: after Compare Price it pressed the top back arrow, which left the unassigned screen for the store. When the results open next to the list, it now just selects the card again; it only uses a back arrow when the results replace the whole screen.
