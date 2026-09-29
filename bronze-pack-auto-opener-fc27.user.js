@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bronze Pack Auto Opener (FC 27)
 // @namespace    http://tampermonkey.net/
-// @version      2026.2.2
+// @version      2026.2.3
 // @description  Automate bronze pack method opening on the FC 27 web app
 // @author       Kogilife
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
@@ -658,20 +658,45 @@
         return visible_all('.listFUTItem').filter(r => !r.closest('.ut-unassigned-view') && !r.closest('#bpao-panel'));
     }
 
-    // Buy Now of one market listing row, or null if it can't be read
-    function row_buy_now(row) {
-        for (const box of row.querySelectorAll('.auctionValue, .auction-value, [class*="auction"] > div')) {
-            if (/buy\s*now/i.test(text(box))) {
-                const value = box.querySelector('.value, .currency-coins, [class*="value"]');
-                const coins = parse_coins(text(value || box).replace(/buy\s*now/i, ''));
-                if (coins) return coins;
+    // the number shown with a label such as "Buy Now:", or null. Works whether the
+    // number is in the label itself ("Buy Now: 400") or in the next element after it.
+    // Going by the label matters: FC 27 cards also show ratings and stats (65, 74, ...).
+    function value_after_label(root, label) {
+        const els = Array.from(root.querySelectorAll('*'));
+        for (let i = 0; i < els.length; i++) {
+            const t = text(els[i]);
+            if (t.length > 40 || !label.test(t)) continue;
+            const rest = t.replace(label, '');
+            if (/^\s*[\d,.]+\s*$/.test(rest)) return parse_coins(rest);
+            if (Array.from(els[i].children).some(c => label.test(text(c)))) continue; // a deeper element is the label
+            for (let j = i + 1; j < els.length && j < i + 15; j++) {
+                if (els[i].contains(els[j])) continue;
+                const v = text(els[j]);
+                if (/^[\d,.]+$/.test(v)) return parse_coins(v);
             }
+            return null;
         }
         return null;
     }
 
+    // Buy Now of one market listing row, or null if it can't be read
+    function row_buy_now(row) {
+        const coins = value_after_label(row, /^\s*buy\s*now\s*:?/i);
+        return coins && coins >= 150 ? coins : null; // nothing on the market sells under 150
+    }
+
+    // EA's allowed price range for this card ("Min Buy Now: 400  Max Buy Now: 5,000")
+    function price_range() {
+        return {
+            min: value_after_label(document.body, /^\s*min\.?\s*buy\s*now\s*:?/i),
+            max: value_after_label(document.body, /^\s*max\.?\s*buy\s*now\s*:?/i),
+        };
+    }
+
     // presses Compare Price for the selected player and returns the cheapest Buy Now,
     // or null if there are no listings. Always returns to the unassigned list.
+    let last_range = { min: null, max: null };
+
     async function lowest_market_price(name, card) {
         const compare = find_button(/compare\s*price/i);
         if (!compare) throw new Error(`Couldn't find the Compare Price button for ${name}.`);
@@ -700,7 +725,10 @@
             throw new Error(`Couldn't read the Compare Price results for ${name}, so I stopped before selling anything. Please send Claude a screenshot of this screen and of the Console (F12).`);
         }
         const lowest = prices.length ? Math.min(...prices) : null;
-        console.log(`${name}: ${prices.length} market listings, lowest Buy Now ${lowest == null ? 'none (no results)' : lowest.toLocaleString()}`);
+        const range = price_range();
+        console.log(`${name}: ${prices.length} market listings, lowest Buy Now ${lowest == null ? 'none (no results)' : lowest.toLocaleString()}` +
+            (range.min ? `, allowed range ${range.min.toLocaleString()} to ${(range.max || 0).toLocaleString()}` : ''));
+        last_range = range;
 
         // back to the unassigned list
         if (visible_all(unassigned_section).length) {
@@ -807,7 +835,7 @@
             if (index >= players.length) break;
             const player = players[index];
             const container = player.closest('.entityContainer');
-            const name = text(container.querySelector('.name')) || text(player).replace(/\s+/g, ' ').slice(0, 30) || 'player';
+            const name = text(container.querySelector('.name, [class*="name"]')) || text(player).replace(/\s+/g, ' ').slice(0, 30) || 'player';
 
             set_status(`Pricing ${name}`);
             simulateFullClick(player);
@@ -821,7 +849,9 @@
                 continue;
             }
 
-            const buyNow = Math.max(200, step_down(lowest));
+            // one step under the cheapest, but inside EA's allowed range for the card
+            let buyNow = Math.max(last_range.min || 200, step_down(lowest));
+            if (last_range.max) buyNow = Math.min(buyNow, last_range.max);
             // the card list may have redrawn after coming back, so select it again
             const again = visible_all(unassigned_section + ' .player')[index];
             if (!again) break;

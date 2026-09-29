@@ -31,7 +31,7 @@ The panel shows live progress, including profit. Set `SHOW_PANEL = false` in the
 Click **Switch to Silver** on the panel (while the bot is stopped). For each player the bot:
 1. presses **Compare Price** and reads the cheapest Buy Now,
 2. if that is under **Silver: quick sell if cheapest Buy Now is under** (default 400), or there are no listings, leaves the player to be quick sold,
-3. otherwise lists it for 1 hour: Buy Now one price step under the cheapest, Start Price one step below that.
+3. otherwise lists it for 1 hour: Buy Now one price step under the cheapest (never below the card's Min Buy Now), Start Price one step below that.
 
 The first listing of each run asks you to confirm the player and prices. Check they look right, then click OK and it carries on without asking again. Each player costs one market search; EA temporarily blocks accounts that search too much, so keep runs reasonable. If the transfer list is full (100), the bot stops instead of quick selling.
 
@@ -68,6 +68,10 @@ The bot stops, instead of quick selling something valuable, when:
 ## Changelog
 
 The version shows next to the panel title and in the console (F12) when the script loads.
+
+### 2026.2.3
+- Fixed silver mode reading player ratings and stats (65, 74, ...) as the market price, which made it quick sell everything. It now reads the number that goes with the "Buy Now:" label on each Compare Price result, and ignores anything under 150.
+- Listings stay inside EA's allowed range for the card (the "Min Buy Now / Max Buy Now" shown on Compare Price). If the cheapest listing is already at the minimum, it lists at the minimum.
 
 ### 2026.2.2
 - Fixed silver mode quick selling every player: when it couldn't read the Compare Price results it treated players as having no listings. It now stops and leaves the players in Unassigned unless the screen actually says there are no results, and logs what the result rows look like in the console.
