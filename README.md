@@ -55,6 +55,10 @@ The bot stops, instead of quick selling something valuable, when:
 
 The version shows next to the panel title and in the console (F12) when the script loads.
 
+### 2026.1.2
+- Fixed: the web app crashed ("Application Error") when a pack had a duplicate player. The bot could mistake a duplicate for a new player and press Send to Club on it. Duplicates are now recognised more broadly, and a disabled Send to Club button is never pressed.
+- The console (F12) lists how each unassigned card is labelled, to help track down problems.
+
 ### 2026.1.1
 - Fixed: the bot stopped with "Quick sell didn't clear the unassigned items" even though the list was empty. The web app keeps a hidden copy of the old list after quick selling, and the bot was counting those hidden cards. It now only looks at cards that are actually on screen.
 - Quick sell never uses a pack's buy button by mistake after the web app jumps back to the store.

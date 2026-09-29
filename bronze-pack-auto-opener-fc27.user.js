@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bronze Pack Auto Opener (FC 27)
 // @namespace    http://tampermonkey.net/
-// @version      2026.1.1
+// @version      2026.1.2
 // @description  Automate bronze pack method opening on the FC 27 web app
 // @author       Kogilife
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
@@ -310,16 +310,42 @@
     }
 
     // players still waiting in unassigned that are NOT already in the club
+    // a card that is already in your club. FC 26 used "club-duplicated"; to be safe,
+    // anything marked with "dup" (duplicate, dupe, ...) on the card counts too.
+    // Sending a duplicate to the club crashes the web app, so this must never miss one.
+    function is_duplicate(container) {
+        const row = container.closest('.listFUTItem') || container;
+        return /dup/i.test(container.className) ||
+               /dup/i.test(row.className) ||
+               !!row.querySelector('[class*="dup" i]');
+    }
+
     function non_duplicate_players(skip) {
         return visible_all(unassigned_section + ' .player').filter(p => {
             const container = p.closest('.entityContainer');
-            return container && !container.classList.contains('club-duplicated') && !skip.has(container);
+            return container && !is_duplicate(container) && !skip.has(container);
         });
     }
 
+    function is_disabled(btn) {
+        return btn.disabled ||
+               btn.getAttribute('aria-disabled') === 'true' ||
+               /disabled/i.test(btn.className) ||
+               !!btn.closest('[class*="disabled" i]');
+    }
+
     function find_send_to_club_button() {
-        const btn = document.querySelector('.send-to-club');
-        return btn && !btn.disabled && !btn.classList.contains('disabled') ? btn : null;
+        return visible_all('.send-to-club').find(btn => !is_disabled(btn)) || null;
+    }
+
+    // logs how each unassigned card is labelled, to help track down problems
+    function log_unassigned_cards() {
+        const rows = visible_all(unassigned_section).map(c => {
+            const row = c.closest('.listFUTItem') || c;
+            const kind = c.querySelector('.player') ? 'player' : c.querySelector('.manager, .staff') ? 'manager' : 'item';
+            return `${kind}${is_duplicate(c) ? ' (duplicate)' : ''}: ${row.className} | ${c.className}`;
+        });
+        console.log('Unassigned cards:\n' + rows.join('\n'));
     }
 
     async function send_non_duplicate_bronze_player_to_club() {
@@ -575,6 +601,7 @@
             counter++;
         }
 
+        log_unassigned_cards();
         await send_non_duplicate_bronze_player_to_club();
 
         // one more pass in case the list was slow to update
