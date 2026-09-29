@@ -354,6 +354,34 @@
         }
     }
 
+    // the Redeem button for whatever item is selected (coins, packs, etc.)
+    function find_redeem_button() {
+        const by_class = document.querySelector('.redeem-item');
+        if (by_class && !by_class.disabled) return by_class;
+        return Array.from(document.querySelectorAll('button'))
+            .find(b => /^redeem/i.test(text(b)) && !b.disabled && b.offsetParent !== null) || null;
+    }
+
+    // non player, non manager items still in unassigned (coins, consumables, ...)
+    function unassigned_items(skip) {
+        return Array.from(document.querySelectorAll(unassigned_section)).filter(c =>
+            !skip.has(c) &&
+            !c.querySelector('.player') &&
+            !c.querySelector('.manager, .staff'));
+    }
+
+    // clicks OK on a popup if one opened (e.g. a redeem confirmation)
+    async function confirm_popup() {
+        const ok = document.querySelector(message_dialog_selector + ' .btn-standard.primary');
+        if (ok) {
+            simulateFullClick(ok);
+            await waitForSpinner();
+            await delay(DEFAULT_LONG_DELAY);
+        }
+    }
+
+    // coin cards can't be quick sold or discarded, only redeemed, so redeem
+    // everything that has a Redeem button before quick selling
     async function redeem_misc_items() {
         console.log('redeem_misc_items: start');
         try {
@@ -364,38 +392,62 @@
         }
         await delay(DEFAULT_LONG_DELAY); // small buffer
 
-        while (isRunning) {
-            // Always query fresh
-            const misc = document.querySelector('.small.misc');
-            if (!misc) {
-                console.log('redeem_misc_items: no misc items left');
-                break;
+        const skip = new Set();
+        let redeemed = 0;
+
+        for (let round = 0; round < 30 && isRunning; round++) {
+            const items = unassigned_items(skip);
+            if (items.length === 0) break;
+
+            const item = items[0];
+            const countBefore = items.length;
+
+            let redeem_button = null;
+            for (let tries = 0; tries < 5 && !redeem_button; tries++) {
+                simulateFullClick(item.querySelector('.misc') || item.firstElementChild || item);
+                await delay(DEFAULT_LONG_DELAY);
+                redeem_button = find_redeem_button();
             }
-
-            // Select the misc item (if needed)
-            simulateFullClick(misc);
-            await delay(DEFAULT_LONG_DELAY);
-
-            // Find redeem button safely
-            const redeem_button = document.querySelector('.redeem-item');
             if (!redeem_button) {
-                console.log('redeem_misc_items: redeem button not found, aborting');
-                break;
+                skip.add(item); // not redeemable (e.g. a consumable), quick sell handles it
+                continue;
             }
 
-            console.log('redeem_misc_items: redeeming one misc item');
+            console.log('redeem_misc_items: redeeming an item');
             simulateFullClick(redeem_button);
             await waitForSpinner(); // wait for server roundtrip
-            await delay(DEFAULT_LONG_DELAY * 4); // give UI time to settle
+            await delay(DEFAULT_LONG_DELAY);
+            await confirm_popup();
 
             const errorDialog = document.querySelector('.ea-dialog-view.ea-dialog-view-type--error');
             if (errorDialog) {
-                console.log('redeem_misc_items: error dialog detected, stopping');
-                break;
+                throw new Error('Redeeming an item failed: ' + text(errorDialog).slice(0, 150));
             }
+
+            // wait until the item actually leaves the list
+            let gone = false;
+            for (let waited = 0; waited < 3000; waited += 100) {
+                if (!document.contains(item) || unassigned_items(skip).length < countBefore) {
+                    gone = true;
+                    break;
+                }
+                await delay(100);
+            }
+            if (gone) {
+                redeemed++;
+            } else {
+                skip.add(item);
+            }
+            await delay(DEFAULT_LONG_DELAY);
         }
 
-        console.log('redeem_misc_items: done');
+        // a coin card that is still here would make quick sell fail
+        const stuck = unassigned_items(new Set()).filter(c => /coin/i.test(c.className + ' ' + text(c)));
+        if (stuck.length) {
+            throw new Error("A coin card couldn't be redeemed, so I stopped before quick selling. Redeem it by hand, then press \"-\" again.");
+        }
+
+        console.log(`redeem_misc_items: redeemed ${redeemed} item(s)`);
     }
 
 
@@ -435,22 +487,34 @@
     async function quick_sell() {
         console.log('inside quick sell');
         await delay(DEFAULT_LONG_DELAY * 2);
-        let quick_sell_button = document.querySelector('.currency.primary.coins');
-        counter = 0;
-        while (!quick_sell_button && counter < MAX_RETRIES) {
-            quick_sell_button = document.querySelector('.currency.primary.coins');
-            await delay(DEFAULT_FAST_DELAY);
-            counter++;
-        }
-        counter = 0;
-        while (quick_sell_button && counter < MAX_RETRIES && isRunning) {
+        const items_left = () => document.querySelectorAll(unassigned_section).length > 0;
+
+        for (let tries = 0; tries < 3 && items_left() && isRunning; tries++) {
+            let quick_sell_button = document.querySelector('.currency.primary.coins');
+            counter = 0;
+            while (!quick_sell_button && counter < MAX_RETRIES) {
+                await delay(DEFAULT_FAST_DELAY);
+                quick_sell_button = document.querySelector('.currency.primary.coins');
+                counter++;
+            }
+            if (!quick_sell_button) break;
+
             simulateFullClick(quick_sell_button);
             await delay(DEFAULT_LONG_DELAY * 2);
             simulateFullClick(document.querySelector('.ut-st-button-group .btn-standard.primary'));
-
             await waitForSpinner();
-            quick_sell_button = document.querySelector('.currency.primary.coins');
-            counter++;
+            await delay(DEFAULT_LONG_DELAY);
+
+            // e.g. an item that can't be quick sold: close the popup and stop
+            const errorDialog = document.querySelector('.ea-dialog-view.ea-dialog-view-type--error');
+            if (errorDialog) {
+                const message = text(errorDialog).slice(0, 150);
+                simulateFullClick(errorDialog.querySelector('.btn-standard'));
+                throw new Error('Quick sell failed: ' + message);
+            }
+        }
+        if (items_left() && isRunning) {
+            throw new Error("Quick sell didn't clear the unassigned items. Check what's left, clear it by hand, then press \"-\" again.");
         }
     }
 
