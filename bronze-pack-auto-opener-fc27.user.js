@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bronze Pack Auto Opener (FC 27)
 // @namespace    http://tampermonkey.net/
-// @version      2026.1.2
+// @version      2026.1.3
 // @description  Automate bronze pack method opening on the FC 27 web app
 // @author       Kogilife
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
@@ -294,13 +294,18 @@
             console.warn('Buy confirmation popup did not show up');
         }
 
-        // click ok
-        counter = 0;
-        while (document.querySelector(message_dialog_selector + ' .btn-standard.primary') && counter < MAX_RETRIES) {
-            simulateFullClick(document.querySelector(message_dialog_selector + ' .btn-standard.primary'));
-            await delay(DEFAULT_FAST_DELAY);
-            counter++;
+        // click OK once, then wait for the popup to close. Clicking it again while it
+        // fades out makes the web app open the pack twice and crash ("Application Error").
+        const ok_button = () => visible_all(message_dialog_selector + ' .btn-standard.primary')[0] || null;
+        for (let tries = 0; tries < 3 && ok_button(); tries++) {
+            simulateFullClick(ok_button());
+            for (let waited = 0; waited < 3000 && ok_button(); waited += 100) {
+                await poll(100);
+            }
         }
+        // let the pack finish opening before touching anything
+        await waitForSpinner();
+        await delay(DEFAULT_LONG_DELAY * 2);
 
         if (price != null) {
             coinsSpent += price;

@@ -55,6 +55,9 @@ The bot stops, instead of quick selling something valuable, when:
 
 The version shows next to the panel title and in the console (F12) when the script loads.
 
+### 2026.1.3
+- Fixed: "Application Error" right after buying a pack (console: `Cannot read properties of null (reading 'perform')` in `UTStorePackViewController`). The bot clicked the purchase popup's OK button over and over while it faded out, so the web app tried to open the pack more than once. It now clicks OK once and waits for the popup to close, then lets the pack finish opening before doing anything.
+
 ### 2026.1.2
 - Fixed: the web app crashed ("Application Error") when a pack had a duplicate player. The bot could mistake a duplicate for a new player and press Send to Club on it. Duplicates are now recognised more broadly, and a disabled Send to Club button is never pressed.
 - The console (F12) lists how each unassigned card is labelled, to help track down problems.
