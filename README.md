@@ -51,6 +51,22 @@ The bot stops, instead of quick selling something valuable, when:
 - a coin card can't be redeemed
 - a manager from your countries list can't go to the transfer list (usually because it is full at 100 items)
 
+## Changelog
+
+The version shows next to the panel title and in the console (F12) when the script loads.
+
+### 2026.1.1
+- Fixed: the bot stopped with "Quick sell didn't clear the unassigned items" even though the list was empty. The web app keeps a hidden copy of the old list after quick selling, and the bot was counting those hidden cards. It now only looks at cards that are actually on screen.
+- Quick sell never uses a pack's buy button by mistake after the web app jumps back to the store.
+- No extra back click when the web app has already returned to the store.
+- If cards really are left after quick selling, the bot tries to redeem them, and the error names what's left.
+- Version number shown on the panel.
+
+### 2026.1.0
+- First FC 27 release: opens Large Bronze Packs, stores new players in the club, sends managers from chosen countries to the transfer list, redeems coin cards and quick sells the rest.
+- Panel with Start/Stop, live stats and profit, a Settings tab saved in the browser, and a History tab with all time totals and valuable managers.
+- Coin limits, pack and time limits, speed setting, and safety stops so nothing valuable is quick sold.
+
 ## What changed from the FC 26 version
 
 - `@match` now covers any language/region URL (`/en-au/`, `/en-gb/`, `/en-us/`, none at all, etc.), so it runs on the FC 27 web app wherever you open it.

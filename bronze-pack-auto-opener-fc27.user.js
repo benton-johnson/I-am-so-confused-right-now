@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bronze Pack Auto Opener (FC 27)
 // @namespace    http://tampermonkey.net/
-// @version      2026.1.0
+// @version      2026.1.1
 // @description  Automate bronze pack method opening on the FC 27 web app
 // @author       Kogilife
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
@@ -20,6 +20,9 @@
     // ------------------------------------------------------------------
     // SETTINGS: if EA renames something in FC 27, fix it here first.
     // ------------------------------------------------------------------
+    // version from the @version line above (Tampermonkey provides GM_info)
+    const SCRIPT_VERSION = typeof GM_info !== 'undefined' ? GM_info.script.version : '';
+
     const CLASSIC_PACKS_TAB_NAME = "Classic Packs";
     const BIO_COUNTRY_LABEL = "Country/Region";
 
@@ -941,8 +944,10 @@
         if (panelView !== 'main' && !force && panel.childElementCount) return;
 
         panel.textContent = '';
-        panel.appendChild(el('div', 'font-weight:bold;margin-bottom:4px', 'Bronze Auto Opener' +
-            (panelView === 'settings' ? ': Settings' : panelView === 'history' ? ': History' : '')));
+        const title = el('div', 'font-weight:bold;margin-bottom:4px', 'Bronze Auto Opener' +
+            (panelView === 'settings' ? ': Settings' : panelView === 'history' ? ': History' : ''));
+        if (SCRIPT_VERSION) title.appendChild(el('span', 'font-weight:normal;opacity:0.6;margin-left:6px', 'v' + SCRIPT_VERSION));
+        panel.appendChild(title);
         if (panelView === 'settings') render_settings();
         else if (panelView === 'history') render_history();
         else render_main();
@@ -970,6 +975,6 @@
     // the web app sometimes rebuilds the page, so put the panel back if it disappears
     if (SHOW_PANEL) setInterval(update_panel, 2000);
 
-    console.log('Bronze Pack Auto Opener (FC 27) loaded. Press "-" to start, "=" to stop.');
+    console.log(`Bronze Pack Auto Opener (FC 27) ${SCRIPT_VERSION ? 'v' + SCRIPT_VERSION + ' ' : ''}loaded. Press "-" to start, "=" to stop.`);
 
 })();
