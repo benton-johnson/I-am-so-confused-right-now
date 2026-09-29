@@ -36,7 +36,7 @@ EA sometimes renames things between years. Open the console (F12) to see where t
 | Setting | What to check |
 | --- | --- |
 | `CLASSIC_PACKS_TAB_NAME` | Exact text of the pack tab (e.g. "Classic Packs") |
-| `BRONZE_PACK_TITLE` | Exact pack name. Right-click the pack > **Inspect** and look for `data-title="..."` |
+| `BRONZE_PACK_TITLE` | Pack name as shown in the store. If it can't be found, the error and the console (F12) list the pack names the script can see |
 | `BIO_COUNTRY_LABEL` | Label shown on a manager's bio for country |
 | `important_manager_countries` | Countries to send to the transfer list; spelling must match the game |
 

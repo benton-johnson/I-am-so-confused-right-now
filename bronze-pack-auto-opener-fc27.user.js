@@ -112,12 +112,61 @@
     }
 
 
-    async function locate_and_open_bronze_pack() {
-        const bronze_pack = document.querySelector(`.ut-store-pack-details-view.is-tradeable[data-title="${BRONZE_PACK_TITLE}"]`);
-        if (!bronze_pack) {
-            throw new Error(`Could not find a pack with data-title="${BRONZE_PACK_TITLE}"`);
+    function same_name(a, b) {
+        return (a || '').replace(/\s+/g, ' ').trim().toLowerCase() === b.replace(/\s+/g, ' ').trim().toLowerCase();
+    }
+
+    function find_coin_button(root) {
+        return root.querySelector('button.currency.coins.primary') ||
+               root.querySelector('button.currency.coins') ||
+               root.querySelector('button.coins');
+    }
+
+    // prefer the tradeable version of the pack if both exist
+    function pick_pack(packs) {
+        return packs.find(p => p.classList.contains('is-tradeable')) || packs[0] || null;
+    }
+
+    function find_bronze_pack() {
+        // 1. pack element tagged with the name (how FC 26 did it)
+        const by_attribute = Array.from(document.querySelectorAll('[data-title]'))
+            .filter(el => same_name(el.getAttribute('data-title'), BRONZE_PACK_TITLE));
+        if (by_attribute.length) return pick_pack(by_attribute);
+
+        // 2. fall back to the name shown on screen: find the text, then walk up to the
+        //    nearest box that also holds a coin buy button
+        const found = [];
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+        while (walker.nextNode()) {
+            if (!same_name(walker.currentNode.textContent, BRONZE_PACK_TITLE)) continue;
+            let el = walker.currentNode.parentElement;
+            while (el && el !== document.body && !find_coin_button(el)) {
+                el = el.parentElement;
+            }
+            if (el && el !== document.body && !found.includes(el)) found.push(el);
         }
-        const open_button = bronze_pack.querySelector('button.currency.coins.primary');
+        return pick_pack(found);
+    }
+
+    // logs every pack name the script can see, to help fix BRONZE_PACK_TITLE
+    function log_visible_packs() {
+        const titles = Array.from(document.querySelectorAll('[data-title]'))
+            .map(el => el.getAttribute('data-title'));
+        const cards = Array.from(document.querySelectorAll('.ut-store-pack-details-view, [class*="pack-details"], [class*="store-pack"]'))
+            .map(el => el.className + ' | ' + text(el).slice(0, 80));
+        console.log('Pack names found (data-title):', titles);
+        console.log('Pack boxes found:', cards);
+        return titles;
+    }
+
+    async function locate_and_open_bronze_pack() {
+        const bronze_pack = find_bronze_pack();
+        if (!bronze_pack) {
+            const titles = log_visible_packs();
+            const hint = titles.length ? ` Packs I can see: ${titles.join(', ')}.` : ' Scroll down so the pack is on screen, then try again.';
+            throw new Error(`Could not find "${BRONZE_PACK_TITLE}".${hint} See the console (F12) for details.`);
+        }
+        const open_button = find_coin_button(bronze_pack);
         if (!open_button) {
             throw new Error('Could not find the coin buy button on the bronze pack');
         }
