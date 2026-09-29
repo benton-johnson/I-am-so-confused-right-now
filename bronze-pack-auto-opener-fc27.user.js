@@ -106,9 +106,11 @@
                     console.log("failed to enter classic packs");
                     return false;
                 }
+                return true;
             }
         }
-        return true;
+        console.log("Classic Packs tab not found");
+        return false;
     }
 
 
@@ -187,89 +189,73 @@
         }
     }
 
+    // players still waiting in unassigned that are NOT already in the club
+    function non_duplicate_players(skip) {
+        return Array.from(document.querySelectorAll(unassigned_section + ' .player')).filter(p => {
+            const container = p.closest('.entityContainer');
+            return container && !container.classList.contains('club-duplicated') && !skip.has(container);
+        });
+    }
+
+    function find_send_to_club_button() {
+        const btn = document.querySelector('.send-to-club');
+        return btn && !btn.disabled && !btn.classList.contains('disabled') ? btn : null;
+    }
+
     async function send_non_duplicate_bronze_player_to_club() {
-        const storedPlayers = new Set();
+        // cards that refused to go to the club, so we don't get stuck on them
+        const skip = new Set();
         let processedCount = 0;
-        const maxPlayers = 13;
 
-        while (processedCount < maxPlayers && isRunning) {
-            // Get FRESH list each iteration
-            const player_list = document.querySelectorAll(unassigned_section + ' .player');
-
-            if (player_list.length === 0) {
-                console.log('No more players found');
+        for (let round = 0; round < 40 && isRunning; round++) {
+            const players = non_duplicate_players(skip);
+            if (players.length === 0) {
+                console.log('No more non duplicate players');
                 break;
             }
 
-            // Find first player that hasn't been stored yet
-            let player = null;
-            let playerName = null;
-            let playerId = null;
+            const player = players[0];
+            const container = player.closest('.entityContainer');
+            const playerName = text(container.querySelector('.name')) || 'player ' + (processedCount + 1);
+            const countBefore = players.length;
 
-            for (const p of player_list) {
-                const container = p.closest('.entityContainer');
-                if (!container) continue;
-
-                // Use data-definition-id or name as unique identifier
-                playerId = container.getAttribute('data-definition-id') ||
-                        container.querySelector('.name')?.textContent;
-
-                if (!storedPlayers.has(playerId)) {
-                    player = p;
-                    playerName = container.querySelector('.name')?.textContent || 'Unknown';
-                    break;
-                } else {
-                    console.log(`Already stored ${playerId}, skipping`);
-                }
-            }
-
-            if (!player) {
-                console.log('All visible players already processed');
-                break;
-            }
-
-            let tries = 0;
-            let selected = false;
-
-            while (tries < MAX_RETRIES) {
-                const listItem = player.closest('.listFUTItem');
-                if (!listItem) break;
-
-                if (listItem.classList.contains('selected')) {
-                    selected = true;
-                    break;
-                }
-
-                console.log('attempting to click player: ' + playerName);
+            // select the card, then wait for its Send to Club button
+            let store_btn = null;
+            for (let tries = 0; tries < 10 && !store_btn; tries++) {
                 simulateFullClick(player);
                 await delay(DEFAULT_LONG_DELAY);
-                tries++;
+                store_btn = find_send_to_club_button();
+            }
+            if (!store_btn) {
+                console.log('No Send to Club button for ' + playerName + ', skipping it');
+                skip.add(container);
+                continue;
             }
 
-            if (selected || tries > 0) {
-                console.log('Selected player: ' + playerName);
-                await delay(DEFAULT_LONG_DELAY);
+            simulateFullClick(store_btn);
+            await waitForSpinner();
 
-                let store_btn = document.querySelector('.send-to-club');
-                if (store_btn) {
-                    simulateFullClick(store_btn);
-                    console.log('Stored in club: ' + playerName);
-                    storedPlayers.add(playerId); // Mark as stored
-                    processedCount++;
-                } else {
-                    console.log('Send to club button not found, stopping player sort');
+            // wait until the card actually leaves the unassigned list
+            let stored = false;
+            for (let waited = 0; waited < 3000; waited += 100) {
+                if (!document.contains(container) || non_duplicate_players(skip).length < countBefore) {
+                    stored = true;
                     break;
                 }
-
-                await delay(DEFAULT_LONG_DELAY * 2); // Wait for potential re-render
-            } else {
-                console.log('Failed to select player, breaking');
-                break;
+                await delay(100);
             }
+
+            if (stored) {
+                processedCount++;
+                console.log('Stored in club: ' + playerName);
+            } else {
+                console.log('Card did not leave the list, skipping it: ' + playerName);
+                skip.add(container);
+            }
+            await delay(DEFAULT_LONG_DELAY); // let the list re-render
         }
 
-        console.log(`Processed ${processedCount} players`);
-        console.log('Stored player IDs:', Array.from(storedPlayers));
+        console.log(`Stored ${processedCount} players in the club`);
     }
 
     async function check_manager_country() {
@@ -369,20 +355,16 @@
 
         await send_non_duplicate_bronze_player_to_club();
 
-        // after sending the non dupes to club, check if there are any more non dupe players left.
-        // if there are, exit to the store and re-enter the unassigned menu
-        const leftover = document.querySelector(unassigned_section + ' .player');
-        if (leftover && !leftover.closest('.entityContainer').classList.contains('club-duplicated')) {
-            simulateFullClick(document.querySelector('.icon-store'));
-            await waitForSpinner();
-            await delay(DEFAULT_FAST_DELAY);
-            simulateFullClick(document.querySelector('.ut-unassigned-tile-view'));
+        // one more pass in case the list was slow to update
+        if (isRunning && non_duplicate_players(new Set()).length > 0) {
+            console.log('Non duplicate players left over, trying once more');
+            await delay(DEFAULT_LONG_DELAY * 2);
+            await send_non_duplicate_bronze_player_to_club();
+        }
 
-            counter = 0;
-            while (document.querySelectorAll(unassigned_section).length === 0 && counter < MAX_RETRIES) {
-                await delay(DEFAULT_FAST_DELAY);
-                counter++;
-            }
+        // never quick sell players you don't own yet: stop instead
+        if (isRunning && non_duplicate_players(new Set()).length > 0) {
+            throw new Error('Some new players could not be sent to the club, so I stopped before quick selling them. Store them by hand, then press "-" again.');
         }
 
         if (!isRunning) return;
@@ -433,46 +415,47 @@
             return false;
         }
 
+        let packsOpened = 0;
         while (isRunning) {
-            try {
-                if (!(await select_classic_packs())) {
-                    isRunning = false;
-                    break;
-                }
-            } catch (err) {
-                console.log("Failed to select classic pack somewhere", err);
-                isRunning = false;
-                return false;
+            if (!(await select_classic_packs())) {
+                throw new Error(`Couldn't get back to ${CLASSIC_PACKS_TAB_NAME} after pack ${packsOpened}. Go to Store > Packs > ${CLASSIC_PACKS_TAB_NAME} and press "-" again.`);
             }
 
             if (!isRunning) break;
-            try {
-                await locate_and_open_bronze_pack();
-            } catch (err) {
-                console.log("Failed to locate or open bronze pack:", err.message);
-                alert("Bronze Pack Auto Opener stopped: " + err.message);
-                isRunning = false;
-                break;
-            }
+            console.log('Step 1: opening pack ' + (packsOpened + 1));
+            await locate_and_open_bronze_pack();
 
             if (!isRunning) break;
+            console.log('Step 2: sorting players, managers and items');
             await sort_players();
 
             if (!isRunning) break;
+            console.log('Step 3: quick selling the rest');
             await quick_sell();
 
             if (!isRunning) break;
+            console.log('Step 4: going back to the packs');
             simulateFullClick(document.querySelector('.ut-navigation-button-control'));
             await waitForSpinner();
+            await delay(DEFAULT_LONG_DELAY);
+            packsOpened++;
         }
-        console.log('Bronze Pack Auto Opener stopped');
     }
 
     async function startAutomation() {
         if (isRunning) return;
         isRunning = true;
         console.log('Bronze Pack Auto Opener started');
-        await mainLoop();
+        try {
+            await mainLoop();
+        } catch (err) {
+            console.error('Bronze Pack Auto Opener error:', err);
+            alert('Bronze Pack Auto Opener stopped: ' + err.message);
+        } finally {
+            // always reset so pressing "-" works again
+            isRunning = false;
+            console.log('Bronze Pack Auto Opener stopped');
+        }
     }
 
     function stopAutomation() {
