@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bronze Pack Auto Opener (FC 27)
 // @namespace    http://tampermonkey.net/
-// @version      2026.1.4
+// @version      2026.1.5
 // @description  Automate bronze pack method opening on the FC 27 web app
 // @author       Kogilife
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
@@ -269,18 +269,18 @@
     }
 
     // waits until the store has finished loading: the pack is on screen, no popup or
-    // loading spinner, and it stays that way for a second. Buying while the store is
+    // loading spinner, and it stays that way briefly. Buying while the store is
     // still animating in crashes the web app ("Application Error").
+    const STORE_SETTLE_MS = 400;
     async function wait_for_store_to_settle() {
         const ready = () => is_visible(find_bronze_pack()) &&
             !document.querySelector('.ut-click-shield.showing') &&
             !visible_all('.ea-dialog-view').length;
         let steady = 0;
-        for (let waited = 0; waited < 15000 && steady < 1000; waited += 100) {
-            steady = ready() ? steady + 100 : 0;
-            await poll(100);
+        for (let waited = 0; waited < 15000 && steady < STORE_SETTLE_MS; waited += 50) {
+            steady = ready() ? steady + 50 : 0;
+            await poll(50);
         }
-        await delay(DEFAULT_LONG_DELAY);
     }
 
     async function locate_and_open_bronze_pack() {

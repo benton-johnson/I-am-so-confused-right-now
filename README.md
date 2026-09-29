@@ -55,10 +55,13 @@ The bot stops, instead of quick selling something valuable, when:
 
 The version shows next to the panel title and in the console (F12) when the script loads.
 
+### 2026.1.5
+- Faster: the wait for the store before each buy is cut from about 1.75 seconds to 0.4 seconds.
+
 ### 2026.1.4
 - Fixed: Redeem is only ever tried on coin and pack cards, never on players or managers. The bot could press a hidden Redeem button left over from an earlier screen while a duplicate player was selected, which discarded the player or crashed the web app.
 - Duplicates that the first quick sell skips are quick sold on the next try (it keeps going while each quick sell clears something).
-- The bot waits for the store to fully load (pack on screen, no popup or spinner, steady for a second) before buying, since buying while the store is still animating in crashed the web app.
+- The bot waits for the store to fully load (pack on screen, no popup or spinner) before buying, since buying while the store is still animating in crashed the web app.
 - Buttons are only pressed when they are on screen, for the manager bio, transfer list, popups and quick sell confirm.
 
 ### 2026.1.3
