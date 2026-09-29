@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bronze Pack Auto Opener (FC 27)
 // @namespace    http://tampermonkey.net/
-// @version      2026.1.3
+// @version      2026.1.4
 // @description  Automate bronze pack method opening on the FC 27 web app
 // @author       Kogilife
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
@@ -268,7 +268,23 @@
         }
     }
 
+    // waits until the store has finished loading: the pack is on screen, no popup or
+    // loading spinner, and it stays that way for a second. Buying while the store is
+    // still animating in crashes the web app ("Application Error").
+    async function wait_for_store_to_settle() {
+        const ready = () => is_visible(find_bronze_pack()) &&
+            !document.querySelector('.ut-click-shield.showing') &&
+            !visible_all('.ea-dialog-view').length;
+        let steady = 0;
+        for (let waited = 0; waited < 15000 && steady < 1000; waited += 100) {
+            steady = ready() ? steady + 100 : 0;
+            await poll(100);
+        }
+        await delay(DEFAULT_LONG_DELAY);
+    }
+
     async function locate_and_open_bronze_pack() {
+        await wait_for_store_to_settle();
         const bronze_pack = find_bronze_pack();
         if (!bronze_pack) {
             const titles = log_visible_packs();
@@ -448,7 +464,7 @@
             simulateFullClick(manager);
             console.log('clicking manager');
             await delay(DEFAULT_LONG_DELAY);
-            simulateFullClick(document.querySelector('.more'));
+            simulateFullClick(visible_all('.more')[0]);
 
             let country = await check_manager_country();
             console.log('manager country: ' + country);
@@ -463,7 +479,7 @@
 
             const manager_name = text(manager.closest('.entityContainer')?.querySelector('.name'));
             const countBefore = unassigned_managers().length;
-            const send_button = document.querySelector('.send-to-transfer-list');
+            const send_button = visible_all('.send-to-transfer-list')[0];
             if (!send_button || send_button.disabled || send_button.classList.contains('disabled')) {
                 throw new Error(`Found a ${country} manager but can't send it to the transfer list (it may be full). Make room, then press "-" again.`);
             }
@@ -491,11 +507,12 @@
     }
 
     // the Redeem button for whatever item is selected (coins, packs, etc.)
+    // only a Redeem button that is on screen and enabled. Pressing a hidden one left
+    // over from an earlier screen crashes the web app ("Application Error").
     function find_redeem_button() {
-        const by_class = document.querySelector('.redeem-item');
-        if (by_class && !by_class.disabled) return by_class;
-        return Array.from(document.querySelectorAll('button'))
-            .find(b => /^redeem/i.test(text(b)) && !b.disabled && b.offsetParent !== null) || null;
+        return visible_all('.redeem-item').find(b => !is_disabled(b)) ||
+               visible_all('button').find(b => /^redeem/i.test(text(b)) && !is_disabled(b)) ||
+               null;
     }
 
     // coin cards and other misc items still in unassigned (not players, managers or consumables)
@@ -508,7 +525,7 @@
 
     // clicks OK on a popup if one opened (e.g. a redeem confirmation)
     async function confirm_popup() {
-        const ok = document.querySelector(message_dialog_selector + ' .btn-standard.primary');
+        const ok = visible_all(message_dialog_selector + ' .btn-standard.primary')[0];
         if (ok) {
             simulateFullClick(ok);
             await waitForSpinner();
@@ -645,11 +662,20 @@
             .find(b => !b.closest('.ut-store-pack-details-view, [data-title]')) || null;
     }
 
+    // leftovers that could be a coin card. Never players or managers: they can't be redeemed.
+    function leftover_items() {
+        return unassigned_left().filter(c => !c.querySelector('.player') && !c.querySelector('.manager, .staff'));
+    }
+
     async function quick_sell() {
         console.log('inside quick sell');
         await delay(DEFAULT_LONG_DELAY * 2);
 
-        for (let tries = 0; tries < 3 && unassigned_left().length && isRunning; tries++) {
+        // keep going while each quick sell clears something (duplicates can need their own)
+        let stuck = 0;
+        for (let tries = 0; tries < 15 && stuck < 2 && unassigned_left().length && isRunning; tries++) {
+            const countBefore = unassigned_left().length;
+
             let quick_sell_button = null;
             for (let waited = 0; waited < 3000 && !quick_sell_button; waited += 100) {
                 quick_sell_button = find_quick_sell_button();
@@ -658,17 +684,17 @@
             if (!quick_sell_button) {
                 // e.g. only a coin card is left, so there is nothing to quick sell
                 console.log('No quick sell button, trying to redeem what is left');
-                if (await redeem_from(unassigned_left)) continue;
+                if (await redeem_from(leftover_items)) continue;
                 break;
             }
 
             simulateFullClick(quick_sell_button);
             await delay(DEFAULT_LONG_DELAY * 2);
-            simulateFullClick(document.querySelector('.ut-st-button-group .btn-standard.primary'));
+            simulateFullClick(visible_all('.ut-st-button-group .btn-standard.primary')[0]);
             await waitForSpinner();
 
             // e.g. an item that can't be quick sold: close the popup and stop
-            const errorDialog = document.querySelector('.ea-dialog-view.ea-dialog-view-type--error');
+            const errorDialog = visible_all('.ea-dialog-view.ea-dialog-view-type--error')[0];
             if (errorDialog) {
                 const message = text(errorDialog).slice(0, 150);
                 simulateFullClick(errorDialog.querySelector('.btn-standard'));
@@ -676,16 +702,19 @@
             }
 
             // give the list time to update
-            for (let waited = 0; waited < 5000 && unassigned_left().length; waited += 100) {
+            for (let waited = 0; waited < 5000 && unassigned_left().length >= countBefore; waited += 100) {
                 await poll(100);
             }
-
-            // something quick sell skipped, usually a coin card: redeem it, then try again
-            if (unassigned_left().length && isRunning) {
-                console.log('Left after quick sell: ' + describe_left());
-                await redeem_from(unassigned_left);
-            }
             await delay(DEFAULT_LONG_DELAY);
+
+            if (!unassigned_left().length) break;
+            console.log('Left after quick sell: ' + describe_left());
+
+            // something quick sell skipped, maybe a coin card: redeem it, then try again
+            if (leftover_items().length && isRunning) {
+                await redeem_from(leftover_items);
+            }
+            stuck = unassigned_left().length < countBefore ? 0 : stuck + 1;
         }
         if (unassigned_left().length && isRunning) {
             throw new Error(`Quick sell didn't clear the unassigned items. Left: ${describe_left()}. Clear them by hand, then press "-" again.`);
@@ -743,7 +772,7 @@
                 simulateFullClick(visible_all('.ut-navigation-button-control')[0]);
             }
             await waitForSpinner();
-            await delay(DEFAULT_LONG_DELAY);
+            await wait_for_store_to_settle();
         }
         return 'Stopped by you.';
     }
