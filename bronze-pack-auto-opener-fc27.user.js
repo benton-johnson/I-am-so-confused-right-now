@@ -105,6 +105,16 @@
         return el ? el.textContent.trim() : '';
     }
 
+    // true if the element is actually on screen (the web app can leave hidden copies of old pages around)
+    function is_visible(el) {
+        return !!el && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
+    }
+
+    // cards in the unassigned list that are really showing
+    function visible_all(selector) {
+        return Array.from(document.querySelectorAll(selector)).filter(is_visible);
+    }
+
     function waitForElement(selector, interval = 100, timeout = 15000) {
         return new Promise((resolve, reject) => {
             const start = Date.now();
@@ -182,7 +192,10 @@
     }
 
     // prefer the tradeable version of the pack if both exist
+    // prefer packs actually on screen, then the tradeable version
     function pick_pack(packs) {
+        const shown = packs.filter(is_visible);
+        if (shown.length) packs = shown;
         return packs.find(p => p.classList.contains('is-tradeable')) || packs[0] || null;
     }
 
@@ -295,7 +308,7 @@
 
     // players still waiting in unassigned that are NOT already in the club
     function non_duplicate_players(skip) {
-        return Array.from(document.querySelectorAll(unassigned_section + ' .player')).filter(p => {
+        return visible_all(unassigned_section + ' .player').filter(p => {
             const container = p.closest('.entityContainer');
             return container && !container.classList.contains('club-duplicated') && !skip.has(container);
         });
@@ -382,7 +395,7 @@
     }
 
     function unassigned_managers() {
-        return Array.from(document.querySelectorAll(unassigned_section + ' .small.manager.staff'));
+        return visible_all(unassigned_section + ' .small.manager.staff');
     }
 
     async function send_important_managers_to_transfer_list() {
@@ -453,7 +466,7 @@
 
     // coin cards and other misc items still in unassigned (not players, managers or consumables)
     function redeemable_items() {
-        return Array.from(document.querySelectorAll(unassigned_section)).filter(c =>
+        return visible_all(unassigned_section).filter(c =>
             !c.querySelector('.player') &&
             !c.querySelector('.manager, .staff') &&
             (c.querySelector('.misc') || /coin/i.test(text(c))));
@@ -469,24 +482,14 @@
         }
     }
 
-    // coin cards can't be quick sold or discarded, only redeemed, so redeem
-    // everything that has a Redeem button before quick selling
-    async function redeem_misc_items() {
-        console.log('redeem_misc_items: start');
-        try {
-            await waitForElement('.listFUTItem'); // wait for list
-        } catch (err) {
-            console.log('redeem_misc_items: no list found, skipping');
-            return;
-        }
-        await delay(DEFAULT_LONG_DELAY); // small buffer
-
+    // redeems every item from get_items() that has a Redeem button, returns how many
+    async function redeem_from(get_items) {
         let redeemed = 0;
         // items without a Redeem button stay in the list, so walk it by position
         let index = 0;
 
         for (let round = 0; round < 20 && isRunning; round++) {
-            const items = redeemable_items();
+            const items = get_items();
             if (index >= items.length) break;
 
             const item = items[index];
@@ -517,7 +520,7 @@
             // wait until the item actually leaves the list
             let gone = false;
             for (let waited = 0; waited < 3000; waited += 100) {
-                if (redeemable_items().length < countBefore) {
+                if (get_items().length < countBefore) {
                     gone = true;
                     break;
                 }
@@ -532,6 +535,22 @@
             }
             await delay(DEFAULT_LONG_DELAY);
         }
+        return redeemed;
+    }
+
+    // coin cards can't be quick sold or discarded, only redeemed, so redeem
+    // everything that has a Redeem button before quick selling
+    async function redeem_misc_items() {
+        console.log('redeem_misc_items: start');
+        try {
+            await waitForElement('.listFUTItem'); // wait for list
+        } catch (err) {
+            console.log('redeem_misc_items: no list found, skipping');
+            return;
+        }
+        await delay(DEFAULT_LONG_DELAY); // small buffer
+
+        const redeemed = await redeem_from(redeemable_items);
 
         // a coin card that is still here would make quick sell fail
         const stuck = redeemable_items().filter(c => /coin/i.test(c.className + ' ' + text(c)));
@@ -546,9 +565,9 @@
 
     async function sort_players() {
         counter = 0;
-        let items = document.querySelectorAll(unassigned_section);
+        let items = visible_all(unassigned_section);
         while (items.length == 0 && counter < MAX_RETRIES) {
-            items = document.querySelectorAll(unassigned_section);
+            items = visible_all(unassigned_section);
             await delay(DEFAULT_FAST_DELAY);
             counter++;
         }
@@ -576,26 +595,42 @@
         await redeem_misc_items();
     }
 
+    function unassigned_left() {
+        return visible_all(unassigned_section);
+    }
+
+    // short description of the cards still in unassigned, for error messages
+    function describe_left() {
+        const names = unassigned_left().slice(0, 5).map(c => text(c).replace(/\s+/g, ' ').slice(0, 40) || '(no text)');
+        return names.join('; ') + (unassigned_left().length > 5 ? '; ...' : '');
+    }
+
+    function find_quick_sell_button() {
+        return visible_all('.currency.primary.coins')
+            .find(b => !b.closest('.ut-store-pack-details-view, [data-title]')) || null;
+    }
+
     async function quick_sell() {
         console.log('inside quick sell');
         await delay(DEFAULT_LONG_DELAY * 2);
-        const items_left = () => document.querySelectorAll(unassigned_section).length > 0;
 
-        for (let tries = 0; tries < 3 && items_left() && isRunning; tries++) {
-            let quick_sell_button = document.querySelector('.currency.primary.coins');
-            counter = 0;
-            while (!quick_sell_button && counter < MAX_RETRIES) {
-                await delay(DEFAULT_FAST_DELAY);
-                quick_sell_button = document.querySelector('.currency.primary.coins');
-                counter++;
+        for (let tries = 0; tries < 3 && unassigned_left().length && isRunning; tries++) {
+            let quick_sell_button = null;
+            for (let waited = 0; waited < 3000 && !quick_sell_button; waited += 100) {
+                quick_sell_button = find_quick_sell_button();
+                if (!quick_sell_button) await poll(100);
             }
-            if (!quick_sell_button) break;
+            if (!quick_sell_button) {
+                // e.g. only a coin card is left, so there is nothing to quick sell
+                console.log('No quick sell button, trying to redeem what is left');
+                if (await redeem_from(unassigned_left)) continue;
+                break;
+            }
 
             simulateFullClick(quick_sell_button);
             await delay(DEFAULT_LONG_DELAY * 2);
             simulateFullClick(document.querySelector('.ut-st-button-group .btn-standard.primary'));
             await waitForSpinner();
-            await delay(DEFAULT_LONG_DELAY);
 
             // e.g. an item that can't be quick sold: close the popup and stop
             const errorDialog = document.querySelector('.ea-dialog-view.ea-dialog-view-type--error');
@@ -604,9 +639,21 @@
                 simulateFullClick(errorDialog.querySelector('.btn-standard'));
                 throw new Error('Quick sell failed: ' + message);
             }
+
+            // give the list time to update
+            for (let waited = 0; waited < 5000 && unassigned_left().length; waited += 100) {
+                await poll(100);
+            }
+
+            // something quick sell skipped, usually a coin card: redeem it, then try again
+            if (unassigned_left().length && isRunning) {
+                console.log('Left after quick sell: ' + describe_left());
+                await redeem_from(unassigned_left);
+            }
+            await delay(DEFAULT_LONG_DELAY);
         }
-        if (items_left() && isRunning) {
-            throw new Error("Quick sell didn't clear the unassigned items. Check what's left, clear it by hand, then press \"-\" again.");
+        if (unassigned_left().length && isRunning) {
+            throw new Error(`Quick sell didn't clear the unassigned items. Left: ${describe_left()}. Clear them by hand, then press "-" again.`);
         }
     }
 
@@ -656,7 +703,10 @@
 
             if (!isRunning) break;
             set_status('Going back to the packs');
-            simulateFullClick(document.querySelector('.ut-navigation-button-control'));
+            // the web app sometimes returns to the store by itself after quick selling
+            if (!is_visible(find_bronze_pack())) {
+                simulateFullClick(visible_all('.ut-navigation-button-control')[0]);
+            }
             await waitForSpinner();
             await delay(DEFAULT_LONG_DELAY);
         }
