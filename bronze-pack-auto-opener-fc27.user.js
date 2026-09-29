@@ -24,6 +24,14 @@
     const BRONZE_PACK_TITLE = "Large Bronze Pack";
     const BIO_COUNTRY_LABEL = "Country/Region";
 
+    // COIN LIMITS (0 = no limit)
+    // most coins to spend on packs each time you press "-"
+    const MAX_COINS_TO_SPEND = 0;
+    // never buy a pack if it would take your balance below this
+    const STOP_WHEN_COINS_BELOW = 0;
+    // where the web app shows your coin balance (first one found is used)
+    const COIN_BALANCE_SELECTORS = ['.view-navbar-currency-coins', '.view-navbar-currency .coins', '.ut-navbar-currency-coins'];
+
     const MAX_RETRIES = 300;
     const DEFAULT_FAST_DELAY = 10;
     const DEFAULT_LONG_DELAY = 300;
@@ -39,6 +47,7 @@
 
     let counter = 0;
     let isRunning = false;
+    let coinsSpent = 0;
 
     function delay(ms) {
         return new Promise(res => setTimeout(res, ms));
@@ -161,6 +170,40 @@
         return titles;
     }
 
+    function parse_coins(str) {
+        const digits = (str || '').replace(/[^0-9]/g, '');
+        return digits ? parseInt(digits, 10) : null;
+    }
+
+    function read_coin_balance() {
+        for (const selector of COIN_BALANCE_SELECTORS) {
+            const coins = parse_coins(text(document.querySelector(selector)));
+            if (coins != null) return coins;
+        }
+        return null;
+    }
+
+    // throws (which stops the bot) if buying one more pack would break a coin limit
+    function check_coin_limits(price) {
+        if (!MAX_COINS_TO_SPEND && !STOP_WHEN_COINS_BELOW) return;
+
+        if (price == null) {
+            throw new Error("Couldn't read the pack price, so I can't check your coin limits.");
+        }
+        if (MAX_COINS_TO_SPEND && coinsSpent + price > MAX_COINS_TO_SPEND) {
+            throw new Error(`Coin limit reached: spent ${coinsSpent.toLocaleString()} of ${MAX_COINS_TO_SPEND.toLocaleString()} coins. Another pack costs ${price.toLocaleString()}.`);
+        }
+        if (STOP_WHEN_COINS_BELOW) {
+            const balance = read_coin_balance();
+            if (balance == null) {
+                throw new Error("Couldn't read your coin balance. Check COIN_BALANCE_SELECTORS at the top of the script.");
+            }
+            if (balance - price < STOP_WHEN_COINS_BELOW) {
+                throw new Error(`Stopped to keep at least ${STOP_WHEN_COINS_BELOW.toLocaleString()} coins. Balance is ${balance.toLocaleString()} and a pack costs ${price.toLocaleString()}.`);
+            }
+        }
+    }
+
     async function locate_and_open_bronze_pack() {
         const bronze_pack = find_bronze_pack();
         if (!bronze_pack) {
@@ -172,6 +215,9 @@
         if (!open_button) {
             throw new Error('Could not find the coin buy button on the bronze pack');
         }
+
+        const price = parse_coins(text(open_button));
+        check_coin_limits(price);
 
         counter = 0;
         while (document.querySelector(message_dialog_selector) == null && counter < MAX_RETRIES) {
@@ -186,6 +232,12 @@
             simulateFullClick(document.querySelector(message_dialog_selector + ' .btn-standard.primary'));
             await delay(DEFAULT_FAST_DELAY);
             counter++;
+        }
+
+        if (price != null) {
+            coinsSpent += price;
+            const budget = MAX_COINS_TO_SPEND ? ` of ${MAX_COINS_TO_SPEND.toLocaleString()}` : '';
+            console.log(`Coins spent this run: ${coinsSpent.toLocaleString()}${budget}`);
         }
     }
 
@@ -445,6 +497,7 @@
     async function startAutomation() {
         if (isRunning) return;
         isRunning = true;
+        coinsSpent = 0;
         console.log('Bronze Pack Auto Opener started');
         try {
             await mainLoop();

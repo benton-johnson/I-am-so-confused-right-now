@@ -20,6 +20,18 @@ By Kogilife.
 2. Click anywhere on the page (not in a text box) and press **`-`** to start.
 3. Press **`=`** (or `+`) to stop. It stops after the current step finishes.
 
+## Coin limits
+
+At the top of the script, in the **SETTINGS** block (0 means no limit):
+
+| Setting | What it does |
+| --- | --- |
+| `MAX_COINS_TO_SPEND` | Most coins the bot spends on packs each time you press `-`. Example: `15000` stops after 20 packs at 750. |
+| `STOP_WHEN_COINS_BELOW` | Never buys a pack that would take your balance under this. Example: `50000` keeps at least 50k. |
+
+When a limit is hit, the bot stops and a popup tells you why. The console (F12) shows how much it has spent after each pack.
+If you get "Couldn't read your coin balance", right-click your coin total at the top of the web app, choose **Inspect**, and add its class to `COIN_BALANCE_SELECTORS`.
+
 ## What changed from the FC 26 version
 
 - `@match` now covers any language/region URL (`/en-au/`, `/en-gb/`, `/en-us/`, none at all, etc.), so it runs on the FC 27 web app wherever you open it.
