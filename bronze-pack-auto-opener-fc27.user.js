@@ -34,7 +34,14 @@
 
     // SPEED: every wait is multiplied by this. 1 = normal, 1.5 = 50% slower, 2 = half speed.
     // Raise it if the web app lags and the bot clicks before a screen has loaded.
-    const DELAY_MULTIPLIER = 1.5;
+    const DELAY_MULTIPLIER = 2.5;
+
+    // RUN LIMITS (0 = no limit)
+    const MAX_PACKS = 0;      // stop after opening this many packs
+    const MAX_MINUTES = 0;    // stop after running this many minutes
+
+    // show the status panel with Start / Stop buttons in the bottom right
+    const SHOW_PANEL = true;
 
     const MAX_RETRIES = 300;
     const DEFAULT_FAST_DELAY = 10;
@@ -52,6 +59,12 @@
     let counter = 0;
     let isRunning = false;
     let coinsSpent = 0;
+    let stats = new_stats();
+    let status = 'Idle';
+
+    function new_stats() {
+        return { packs: 0, players: 0, redeemed: 0, managers: [], startTime: Date.now(), started: false };
+    }
 
     function delay(ms) {
         return new Promise(res => setTimeout(res, ms * DELAY_MULTIPLIER));
@@ -223,11 +236,15 @@
         const price = parse_coins(text(open_button));
         check_coin_limits(price);
 
-        counter = 0;
-        while (document.querySelector(message_dialog_selector) == null && counter < MAX_RETRIES) {
+        // click once, then wait for the confirm popup (click again only if it never shows)
+        for (let tries = 0; tries < 5 && document.querySelector(message_dialog_selector) == null; tries++) {
             simulateFullClick(open_button);
-            await delay(DEFAULT_FAST_DELAY);
-            counter++;
+            for (let waited = 0; waited < 1500 && document.querySelector(message_dialog_selector) == null; waited += 100) {
+                await delay(100);
+            }
+        }
+        if (document.querySelector(message_dialog_selector) == null) {
+            console.warn('Buy confirmation popup did not show up');
         }
 
         // click ok
@@ -311,6 +328,8 @@
             await delay(DEFAULT_LONG_DELAY); // let the list re-render
         }
 
+        stats.players += processedCount;
+        update_panel();
         console.log(`Stored ${processedCount} players in the club`);
     }
 
@@ -327,15 +346,23 @@
         return null;
     }
 
+    function unassigned_managers() {
+        return Array.from(document.querySelectorAll(unassigned_section + ' .small.manager.staff'));
+    }
+
     async function send_important_managers_to_transfer_list() {
         await delay(DEFAULT_LONG_DELAY * 2);
-        let manager_list = document.querySelectorAll('.entityContainer .small.manager.staff');
-        console.log('manager list length: ' + manager_list.length);
-        if (manager_list.length == 0) return;
+        console.log('manager list length: ' + unassigned_managers().length);
+        if (unassigned_managers().length == 0) return;
 
         await waitForElement('.listFUTItem');
-        for (const manager of manager_list) {
-            if (!isRunning) return;
+        // managers we keep (not important) stay in the list, so walk it by position
+        let index = 0;
+        for (let round = 0; round < 20 && isRunning; round++) {
+            const managers = unassigned_managers();
+            if (index >= managers.length) break;
+            const manager = managers[index];
+
             simulateFullClick(manager);
             console.log('clicking manager');
             await delay(DEFAULT_LONG_DELAY);
@@ -347,10 +374,35 @@
             simulateFullClick(back_button);
             await delay(DEFAULT_LONG_DELAY);
 
-            if (country != null && important_manager_countries.includes(country)) {
-                simulateFullClick(document.querySelector('.send-to-transfer-list'));
-                await delay(DEFAULT_FAST_DELAY);
+            if (country == null || !important_manager_countries.includes(country)) {
+                index++;
+                continue;
             }
+
+            const countBefore = unassigned_managers().length;
+            const send_button = document.querySelector('.send-to-transfer-list');
+            if (!send_button || send_button.disabled || send_button.classList.contains('disabled')) {
+                throw new Error(`Found a ${country} manager but can't send it to the transfer list (it may be full). Make room, then press "-" again.`);
+            }
+            simulateFullClick(send_button);
+            await waitForSpinner();
+
+            // make sure it actually left, otherwise quick sell would sell it
+            let sent = false;
+            for (let waited = 0; waited < 3000; waited += 100) {
+                if (unassigned_managers().length < countBefore) {
+                    sent = true;
+                    break;
+                }
+                await delay(100);
+            }
+            if (!sent) {
+                throw new Error(`A ${country} manager didn't go to the transfer list (it may be full, max 100). I stopped so it doesn't get quick sold. Make room, then press "-" again.`);
+            }
+            stats.managers.push(country);
+            update_panel();
+            console.log('Sent ' + country + ' manager to the transfer list');
+            await delay(DEFAULT_LONG_DELAY);
         }
     }
 
@@ -435,6 +487,8 @@
             }
             if (gone) {
                 redeemed++;
+                stats.redeemed++;
+                update_panel();
             } else {
                 skip.add(item);
             }
@@ -535,52 +589,130 @@
             return false;
         }
 
-        let packsOpened = 0;
+        stats.started = true;
         while (isRunning) {
+            if (MAX_PACKS && stats.packs >= MAX_PACKS) {
+                return `Pack limit reached (${MAX_PACKS} packs).`;
+            }
+            if (MAX_MINUTES && Date.now() - stats.startTime >= MAX_MINUTES * 60000) {
+                return `Time limit reached (${MAX_MINUTES} minutes).`;
+            }
+
             if (!(await select_classic_packs())) {
-                throw new Error(`Couldn't get back to ${CLASSIC_PACKS_TAB_NAME} after pack ${packsOpened}. Go to Store > Packs > ${CLASSIC_PACKS_TAB_NAME} and press "-" again.`);
+                throw new Error(`Couldn't get back to ${CLASSIC_PACKS_TAB_NAME} after pack ${stats.packs}. Go to Store > Packs > ${CLASSIC_PACKS_TAB_NAME} and press "-" again.`);
             }
 
             if (!isRunning) break;
-            console.log('Step 1: opening pack ' + (packsOpened + 1));
+            set_status('Opening pack ' + (stats.packs + 1));
             await locate_and_open_bronze_pack();
+            stats.packs++;
+            update_panel();
 
             if (!isRunning) break;
-            console.log('Step 2: sorting players, managers and items');
+            set_status('Sorting players, managers and items');
             await sort_players();
 
             if (!isRunning) break;
-            console.log('Step 3: quick selling the rest');
+            set_status('Quick selling the rest');
             await quick_sell();
 
             if (!isRunning) break;
-            console.log('Step 4: going back to the packs');
+            set_status('Going back to the packs');
             simulateFullClick(document.querySelector('.ut-navigation-button-control'));
             await waitForSpinner();
             await delay(DEFAULT_LONG_DELAY);
-            packsOpened++;
         }
+        return 'Stopped by you.';
     }
 
     async function startAutomation() {
         if (isRunning) return;
         isRunning = true;
         coinsSpent = 0;
+        stats = new_stats();
+        set_status('Running');
         console.log('Bronze Pack Auto Opener started');
+        let reason = '';
         try {
-            await mainLoop();
+            reason = await mainLoop();
         } catch (err) {
             console.error('Bronze Pack Auto Opener error:', err);
-            alert('Bronze Pack Auto Opener stopped: ' + err.message);
+            reason = err.message;
         } finally {
             // always reset so pressing "-" works again
             isRunning = false;
+            set_status('Stopped');
             console.log('Bronze Pack Auto Opener stopped');
+        }
+        if (stats.started) {
+            const summary = run_summary();
+            console.log(summary);
+            alert('Bronze Pack Auto Opener stopped: ' + reason + '\n\n' + summary);
         }
     }
 
+    function run_summary() {
+        const minutes = Math.round((Date.now() - stats.startTime) / 60000);
+        const managers = stats.managers.length
+            ? `${stats.managers.length} (${stats.managers.join(', ')})`
+            : '0';
+        return [
+            `Packs opened: ${stats.packs}`,
+            `Coins spent on packs: ${coinsSpent.toLocaleString()}`,
+            `Players stored in club: ${stats.players}`,
+            `Items redeemed: ${stats.redeemed}`,
+            `Managers sent to transfer list: ${managers}`,
+            `Time: ${minutes} min`,
+        ].join('\n');
+    }
+
+    // ------------------------------------------------------------------
+    // status panel
+    // ------------------------------------------------------------------
+    let panel = null;
+
+    function set_status(message) {
+        status = message;
+        console.log(message);
+        update_panel();
+    }
+
+    function build_panel() {
+        panel = document.createElement('div');
+        panel.id = 'bpao-panel';
+        panel.style.cssText = 'position:fixed;right:12px;bottom:12px;z-index:2147483647;width:230px;' +
+            'padding:10px 12px;border-radius:8px;background:rgba(15,20,30,0.92);color:#fff;' +
+            'font:12px/1.5 sans-serif;box-shadow:0 4px 16px rgba(0,0,0,0.4);';
+        panel.innerHTML =
+            '<div style="font-weight:bold;margin-bottom:4px">Bronze Auto Opener</div>' +
+            '<div data-bpao="status"></div>' +
+            '<div data-bpao="stats" style="margin:6px 0;white-space:pre-line;opacity:0.85"></div>' +
+            '<button data-bpao="start" style="margin-right:6px;padding:3px 12px;cursor:pointer">Start</button>' +
+            '<button data-bpao="stop" style="padding:3px 12px;cursor:pointer">Stop</button>';
+        // keep panel clicks away from the web app
+        ['mousedown', 'mouseup', 'click'].forEach(type => panel.addEventListener(type, e => e.stopPropagation()));
+        panel.querySelector('[data-bpao="start"]').addEventListener('click', () => startAutomation());
+        panel.querySelector('[data-bpao="stop"]').addEventListener('click', () => stopAutomation());
+    }
+
+    function update_panel() {
+        if (!SHOW_PANEL || !document.body) return;
+        if (!panel) build_panel();
+        if (!document.body.contains(panel)) document.body.appendChild(panel);
+
+        const budget = MAX_COINS_TO_SPEND ? ` / ${MAX_COINS_TO_SPEND.toLocaleString()}` : '';
+        const packs = MAX_PACKS ? ` / ${MAX_PACKS}` : '';
+        panel.querySelector('[data-bpao="status"]').textContent = (isRunning ? 'Running: ' : '') + status;
+        panel.querySelector('[data-bpao="stats"]').textContent =
+            `Packs: ${stats.packs}${packs}\n` +
+            `Coins spent: ${coinsSpent.toLocaleString()}${budget}\n` +
+            `Players stored: ${stats.players}\n` +
+            `Managers listed: ${stats.managers.length}`;
+    }
+
     function stopAutomation() {
-        if (isRunning) console.log('Bronze Pack Auto Opener stopping after the current step...');
+        if (!isRunning) return;
+        set_status('Stopping after the current step...');
         isRunning = false;
     }
 
@@ -595,6 +727,10 @@
             stopAutomation();
         }
     });
+
+    update_panel();
+    // the web app sometimes rebuilds the page, so put the panel back if it disappears
+    if (SHOW_PANEL) setInterval(update_panel, 2000);
 
     console.log('Bronze Pack Auto Opener (FC 27) loaded. Press "-" to start, "=" to stop.');
 

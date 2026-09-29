@@ -17,13 +17,30 @@ By Kogilife.
 ## Use
 
 1. In the web app go to **Store > Packs**, then select the **Classic Packs** tab.
-2. Click anywhere on the page (not in a text box) and press **`-`** to start.
-3. Press **`=`** (or `+`) to stop. It stops after the current step finishes.
+2. Click **Start** on the panel in the bottom right, or press **`-`** (not while typing in a text box).
+3. Click **Stop** or press **`=`** (or `+`) to stop. It stops after the current step finishes.
+4. When it stops, a popup shows why and a summary: packs opened, coins spent, players stored, items redeemed, and which managers went to the transfer list.
+
+The panel shows live progress. Set `SHOW_PANEL = false` to hide it.
 
 ## Speed
 
-`DELAY_MULTIPLIER` in the **SETTINGS** block scales every wait in the script. It is set to `1.5` (50% slower than the original).
+`DELAY_MULTIPLIER` in the **SETTINGS** block scales every wait in the script. It is set to `2.5` (2.5 times slower than the original).
 Use `1` for the original speed, or `2` for half speed if the web app lags and the bot clicks before a screen has loaded.
+
+## Run limits
+
+| Setting | What it does |
+| --- | --- |
+| `MAX_PACKS` | Stops after opening this many packs. `0` = no limit. |
+| `MAX_MINUTES` | Stops after running this many minutes. `0` = no limit. |
+
+## Safety stops
+
+The bot stops, instead of quick selling something valuable, when:
+- a new player can't be sent to the club
+- a coin card can't be redeemed
+- a manager from `important_manager_countries` can't go to the transfer list (usually because it is full at 100 items)
 
 ## Coin limits
 
