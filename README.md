@@ -20,6 +20,11 @@ By Kogilife.
 2. Click anywhere on the page (not in a text box) and press **`-`** to start.
 3. Press **`=`** (or `+`) to stop. It stops after the current step finishes.
 
+## Speed
+
+`DELAY_MULTIPLIER` in the **SETTINGS** block scales every wait in the script. It is set to `1.5` (50% slower than the original).
+Use `1` for the original speed, or `2` for half speed if the web app lags and the bot clicks before a screen has loaded.
+
 ## Coin limits
 
 At the top of the script, in the **SETTINGS** block (0 means no limit):

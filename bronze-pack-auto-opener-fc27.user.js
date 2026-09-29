@@ -32,6 +32,10 @@
     // where the web app shows your coin balance (first one found is used)
     const COIN_BALANCE_SELECTORS = ['.view-navbar-currency-coins', '.view-navbar-currency .coins', '.ut-navbar-currency-coins'];
 
+    // SPEED: every wait is multiplied by this. 1 = normal, 1.5 = 50% slower, 2 = half speed.
+    // Raise it if the web app lags and the bot clicks before a screen has loaded.
+    const DELAY_MULTIPLIER = 1.5;
+
     const MAX_RETRIES = 300;
     const DEFAULT_FAST_DELAY = 10;
     const DEFAULT_LONG_DELAY = 300;
@@ -50,7 +54,7 @@
     let coinsSpent = 0;
 
     function delay(ms) {
-        return new Promise(res => setTimeout(res, ms));
+        return new Promise(res => setTimeout(res, ms * DELAY_MULTIPLIER));
     }
 
     function text(el) {
