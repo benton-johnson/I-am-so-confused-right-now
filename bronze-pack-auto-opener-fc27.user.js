@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bronze Pack Auto Opener (FC 27)
 // @namespace    http://tampermonkey.net/
-// @version      2026.1.6
+// @version      2026.2.0
 // @description  Automate bronze pack method opening on the FC 27 web app
 // @author       Kogilife
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
@@ -29,7 +29,14 @@
     // DEFAULT SETTINGS. You can change all of these in the panel's Settings tab
     // instead; what you save there is kept in your browser and survives script updates.
     const DEFAULT_SETTINGS = {
+        // "bronze": store new players in the club, quick sell the rest
+        // "silver": list every player on the transfer market one price step under the
+        //           cheapest Buy Now (or quick sell it if it's worth too little)
+        MODE: "bronze",
         BRONZE_PACK_TITLE: "Large Bronze Pack",
+        SILVER_PACK_TITLE: "Large Silver Pack",
+        // silver mode: quick sell instead of listing when the cheapest Buy Now is under this
+        SILVER_MIN_LIST_PRICE: 400,
         // coin limits (0 = no limit)
         MAX_COINS_TO_SPEND: 0,       // most coins to spend on packs each time you press "-"
         STOP_WHEN_COINS_BELOW: 0,    // never buy a pack if it would take your balance below this
@@ -92,7 +99,8 @@
     let status = 'Idle';
 
     function new_stats() {
-        return { packs: 0, players: 0, redeemed: 0, managers: [], startTime: Date.now(), started: false, startBalance: null };
+        return { packs: 0, players: 0, redeemed: 0, managers: [], startTime: Date.now(), started: false, startBalance: null, mode: settings.MODE, pack: pack_title(),
+                 listed: 0, listedValue: 0, cheap: 0, searches: 0, confirmed: false };
     }
 
     // for "is it done yet?" checks: always real time, not slowed by the speed setting
@@ -184,6 +192,15 @@
     }
 
 
+    function is_silver() {
+        return settings.MODE === 'silver';
+    }
+
+    // the pack to open in the current mode
+    function pack_title() {
+        return is_silver() ? settings.SILVER_PACK_TITLE : settings.BRONZE_PACK_TITLE;
+    }
+
     function same_name(a, b) {
         return (a || '').replace(/\s+/g, ' ').trim().toLowerCase() === b.replace(/\s+/g, ' ').trim().toLowerCase();
     }
@@ -205,7 +222,7 @@
     function find_bronze_pack() {
         // 1. pack element tagged with the name (how FC 26 did it)
         const by_attribute = Array.from(document.querySelectorAll('[data-title]'))
-            .filter(el => same_name(el.getAttribute('data-title'), settings.BRONZE_PACK_TITLE));
+            .filter(el => same_name(el.getAttribute('data-title'), pack_title()));
         if (by_attribute.length) return pick_pack(by_attribute);
 
         // 2. fall back to the name shown on screen: find the text, then walk up to the
@@ -213,7 +230,7 @@
         const found = [];
         const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
         while (walker.nextNode()) {
-            if (!same_name(walker.currentNode.textContent, settings.BRONZE_PACK_TITLE)) continue;
+            if (!same_name(walker.currentNode.textContent, pack_title())) continue;
             let el = walker.currentNode.parentElement;
             while (el && el !== document.body && !find_coin_button(el)) {
                 el = el.parentElement;
@@ -289,7 +306,7 @@
         if (!bronze_pack) {
             const titles = log_visible_packs();
             const hint = titles.length ? ` Packs I can see: ${titles.join(', ')}.` : ' Scroll down so the pack is on screen, then try again.';
-            throw new Error(`Could not find "${settings.BRONZE_PACK_TITLE}".${hint} See the console (F12) for details.`);
+            throw new Error(`Could not find "${pack_title()}".${hint} Set the right name in the panel's Settings. See the console (F12) for details.`);
         }
         const open_button = find_coin_button(bronze_pack);
         if (!open_button) {
@@ -613,6 +630,191 @@
 
 
 
+    // ------------------------------------------------------------------
+    // silver mode: list players on the transfer market
+    // ------------------------------------------------------------------
+
+    // EA's price steps: under 1,000 goes up in 50s, then 100s, 250s, 500s, 1,000s
+    function price_step(price) {
+        if (price <= 1000) return 50;
+        if (price <= 10000) return 100;
+        if (price <= 50000) return 250;
+        if (price <= 100000) return 500;
+        return 1000;
+    }
+
+    function step_down(price) {
+        const lower = price - price_step(price);
+        return lower - (lower % price_step(lower)); // stay on a valid price
+    }
+
+    // a visible button in the web app (never in our panel) whose text matches
+    function find_button(pattern) {
+        return visible_all('button').find(b => pattern.test(text(b)) && !is_disabled(b) && !b.closest('#bpao-panel')) || null;
+    }
+
+    // Compare Price result rows (not the unassigned list)
+    function compare_rows() {
+        return visible_all('.listFUTItem').filter(r => !r.closest('.ut-unassigned-view') && !r.closest('#bpao-panel'));
+    }
+
+    // Buy Now of one market listing row, or null if it can't be read
+    function row_buy_now(row) {
+        for (const box of row.querySelectorAll('.auctionValue, .auction-value, [class*="auction"] > div')) {
+            if (/buy\s*now/i.test(text(box))) {
+                const value = box.querySelector('.value, .currency-coins, [class*="value"]');
+                const coins = parse_coins(text(value || box).replace(/buy\s*now/i, ''));
+                if (coins) return coins;
+            }
+        }
+        return null;
+    }
+
+    // presses Compare Price for the selected player and returns the cheapest Buy Now,
+    // or null if there are no listings. Always returns to the unassigned list.
+    async function lowest_market_price(name) {
+        const compare = find_button(/compare\s*price/i);
+        if (!compare) throw new Error(`Couldn't find the Compare Price button for ${name}.`);
+        simulateFullClick(compare);
+        stats.searches++;
+        await waitForSpinner();
+
+        // wait for results (or an empty result)
+        let prices = [];
+        for (let waited = 0; waited < 8000; waited += 100) {
+            prices = compare_rows().map(row_buy_now).filter(Boolean);
+            if (prices.length) break;
+            if (visible_all('.ut-no-results-view, [class*="no-results"]').length) break;
+            await poll(100);
+        }
+        await poll(200); // let the rest of the results land
+        prices = compare_rows().map(row_buy_now).filter(Boolean);
+        const lowest = prices.length ? Math.min(...prices) : null;
+        console.log(`${name}: ${prices.length} market listings, lowest Buy Now ${lowest == null ? 'none' : lowest.toLocaleString()}`);
+
+        // back to the unassigned list
+        simulateFullClick(visible_all('.ut-navigation-button-control')[0]);
+        for (let waited = 0; waited < 8000 && !visible_all(unassigned_section).length; waited += 100) {
+            await poll(100);
+        }
+        await waitForSpinner();
+        await delay(DEFAULT_LONG_DELAY);
+        return lowest;
+    }
+
+    // the label text nearest to a box: walk up until some text appears next to it
+    function own_label(input) {
+        let box = input.parentElement;
+        for (let up = 0; up < 5 && box; up++, box = box.parentElement) {
+            const label = Array.from(box.childNodes)
+                .filter(n => n !== input && !(n.contains && n.contains(input)))
+                .map(n => n.textContent || '').join(' ');
+            if (/[a-z]{3}/i.test(label)) return label;
+        }
+        return '';
+    }
+
+    // the price box whose own label (Start Price / Buy Now Price) matches
+    function find_price_input(pattern) {
+        return visible_all('input').find(input => !input.closest('#bpao-panel') && pattern.test(own_label(input))) || null;
+    }
+
+    // types a number into one of the web app's price boxes
+    async function set_price(input, value) {
+        input.focus();
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+        setter.call(input, String(value));
+        ['input', 'change', 'keyup'].forEach(type => input.dispatchEvent(new Event(type, { bubbles: true })));
+        input.blur();
+        input.dispatchEvent(new Event('blur', { bubbles: true }));
+        await poll(150);
+        return parse_coins(input.value) === value;
+    }
+
+    async function list_player(name, buyNow) {
+        const start = Math.max(150, step_down(buyNow));
+
+        // only once per run: let the user check the first price before anything is listed
+        if (!stats.confirmed) {
+            const ok = confirm(`Silver mode: list ${name} with Buy Now ${buyNow.toLocaleString()} and Start Price ${start.toLocaleString()} for 1 hour?\n\nOK lists it and carries on without asking again this run. Cancel stops the bot.`);
+            if (!ok) throw new Error('You cancelled the first listing.');
+            stats.confirmed = true;
+        }
+
+        const open_list = find_button(/list\s*on\s*(the\s*)?transfer\s*market/i);
+        if (!open_list) throw new Error(`Couldn't find "List on Transfer Market" for ${name}.`);
+        simulateFullClick(open_list);
+
+        let startInput = null, buyNowInput = null;
+        for (let waited = 0; waited < 3000 && !(startInput && buyNowInput); waited += 100) {
+            await poll(100);
+            startInput = find_price_input(/start\s*price/i);
+            buyNowInput = find_price_input(/buy\s*now/i);
+        }
+        if (!startInput || !buyNowInput || startInput === buyNowInput) {
+            throw new Error(`Couldn't find the Start Price and Buy Now boxes for ${name}.`);
+        }
+
+        // Buy Now first, so the start price is never above it
+        const buyNowOk = await set_price(buyNowInput, buyNow);
+        const startOk = await set_price(startInput, start);
+        if (!buyNowOk || !startOk) {
+            throw new Error(`Couldn't set the prices for ${name} (Buy Now box shows "${buyNowInput.value}", Start "${startInput.value}"). Nothing was listed.`);
+        }
+
+        const confirm_list = find_button(/^list\s*(for\s*transfer|item)?$/i) || find_button(/list\s*for\s*transfer/i);
+        if (!confirm_list) throw new Error(`Couldn't find the "List for Transfer" button for ${name}.`);
+        const countBefore = visible_all(unassigned_section).length;
+        simulateFullClick(confirm_list);
+        await waitForSpinner();
+
+        const errorDialog = visible_all('.ea-dialog-view.ea-dialog-view-type--error')[0];
+        if (errorDialog) throw new Error(`Listing ${name} failed: ` + text(errorDialog).slice(0, 150));
+
+        for (let waited = 0; waited < 5000; waited += 100) {
+            if (visible_all(unassigned_section).length < countBefore) return true;
+            await poll(100);
+        }
+        throw new Error(`${name} didn't leave the unassigned list after listing (the transfer list may be full, max 100). I stopped so it doesn't get quick sold.`);
+    }
+
+    async function sell_players_on_market() {
+        // players we quick sell (too cheap) stay in the list, so walk it by position
+        let index = 0;
+        for (let round = 0; round < 40 && isRunning; round++) {
+            const players = visible_all(unassigned_section + ' .player');
+            if (index >= players.length) break;
+            const player = players[index];
+            const container = player.closest('.entityContainer');
+            const name = text(container.querySelector('.name')) || text(player).replace(/\s+/g, ' ').slice(0, 30) || 'player';
+
+            set_status(`Pricing ${name}`);
+            simulateFullClick(player);
+            await poll(300);
+
+            const lowest = await lowest_market_price(name);
+            if (lowest == null || lowest < settings.SILVER_MIN_LIST_PRICE) {
+                console.log(`${name}: ${lowest == null ? 'no listings' : 'under ' + settings.SILVER_MIN_LIST_PRICE} , leaving it for quick sell`);
+                stats.cheap++;
+                index++;
+                continue;
+            }
+
+            const buyNow = Math.max(200, step_down(lowest));
+            // the card list may have redrawn after coming back, so select it again
+            const again = visible_all(unassigned_section + ' .player')[index];
+            if (!again) break;
+            simulateFullClick(again);
+            await poll(300);
+            set_status(`Listing ${name} for ${buyNow.toLocaleString()}`);
+            await list_player(name, buyNow);
+            stats.listed++;
+            stats.listedValue += buyNow;
+            update_panel();
+            await delay(DEFAULT_LONG_DELAY);
+        }
+    }
+
     async function sort_players() {
         counter = 0;
         let items = visible_all(unassigned_section);
@@ -623,18 +825,23 @@
         }
 
         log_unassigned_cards();
-        await send_non_duplicate_bronze_player_to_club();
 
-        // one more pass in case the list was slow to update
-        if (isRunning && non_duplicate_players(new Set()).length > 0) {
-            console.log('Non duplicate players left over, trying once more');
-            await delay(DEFAULT_LONG_DELAY * 2);
+        if (is_silver()) {
+            await sell_players_on_market();
+        } else {
             await send_non_duplicate_bronze_player_to_club();
-        }
 
-        // never quick sell players you don't own yet: stop instead
-        if (isRunning && non_duplicate_players(new Set()).length > 0) {
-            throw new Error('Some new players could not be sent to the club, so I stopped before quick selling them. Store them by hand, then press "-" again.');
+            // one more pass in case the list was slow to update
+            if (isRunning && non_duplicate_players(new Set()).length > 0) {
+                console.log('Non duplicate players left over, trying once more');
+                await delay(DEFAULT_LONG_DELAY * 2);
+                await send_non_duplicate_bronze_player_to_club();
+            }
+
+            // never quick sell players you don't own yet: stop instead
+            if (isRunning && non_duplicate_players(new Set()).length > 0) {
+                throw new Error('Some new players could not be sent to the club, so I stopped before quick selling them. Store them by hand, then press "-" again.');
+            }
         }
 
         if (!isRunning) return;
@@ -808,7 +1015,7 @@
             const summary = run_summary(profit);
             console.log(summary);
             update_panel();
-            alert('Bronze Pack Auto Opener stopped: ' + reason + '\n\n' + summary);
+            alert('Pack Auto Opener stopped: ' + reason + '\n\n' + summary);
         }
     }
 
@@ -831,16 +1038,19 @@
             ? "Profit: couldn't read your coin balance"
             : `Profit: ${format_coins(profit)} coins (${stats.startBalance.toLocaleString()} to ${(stats.startBalance + profit).toLocaleString()})`;
         const lines = [
+            `Mode: ${stats.mode === 'silver' ? 'Silver' : 'Bronze'} (${stats.pack})`,
             `Packs opened: ${stats.packs}`,
             `Coins spent on packs: ${coinsSpent.toLocaleString()}`,
             profitLine,
-            `Players stored in club: ${stats.players}`,
+            stats.mode === 'silver'
+                ? `Players listed: ${stats.listed} (Buy Now total ${stats.listedValue.toLocaleString()}), quick sold as too cheap: ${stats.cheap}, price searches: ${stats.searches}`
+                : `Players stored in club: ${stats.players}`,
             `Items redeemed: ${stats.redeemed}`,
             `Managers sent to transfer list: ${managers}`,
             `Time: ${minutes} min`,
         ];
-        if (stats.managers.length) {
-            lines.push('', 'Profit does not include the managers on your transfer list until they sell.');
+        if (stats.managers.length || stats.listed) {
+            lines.push('', 'Profit does not include players or managers on your transfer list until they sell (EA takes 5%).');
         }
         return lines.join('\n');
     }
@@ -871,7 +1081,9 @@
     let panelView = 'main'; // 'main', 'settings' or 'history'
 
     const SETTING_FIELDS = [
-        ['BRONZE_PACK_TITLE', 'Pack name', 'text'],
+        ['BRONZE_PACK_TITLE', 'Bronze mode pack name', 'text'],
+        ['SILVER_PACK_TITLE', 'Silver mode pack name', 'text'],
+        ['SILVER_MIN_LIST_PRICE', 'Silver: quick sell if cheapest Buy Now is under', 'number'],
         ['MAX_PACKS', 'Max packs (0 = no limit)', 'number'],
         ['MAX_MINUTES', 'Max minutes (0 = no limit)', 'number'],
         ['MAX_COINS_TO_SPEND', 'Max coins to spend (0 = no limit)', 'number'],
@@ -923,15 +1135,26 @@
         const profit = isRunning || stats.started ? current_profit() : null;
         panel.appendChild(el('div', '', (isRunning ? 'Running: ' : '') + status));
         panel.appendChild(el('div', 'margin:6px 0;white-space:pre-line;opacity:0.85',
+            `Mode: ${is_silver() ? 'Silver (list players on market)' : 'Bronze (store new players)'}\n` +
             `Packs: ${stats.packs}${packs}\n` +
             `Coins spent: ${coinsSpent.toLocaleString()}${budget}\n` +
             `Profit: ${profit == null ? '-' : format_coins(profit)}\n` +
-            `Players stored: ${stats.players}\n` +
+            (is_silver() ? `Players listed: ${stats.listed}\n` : `Players stored: ${stats.players}\n`) +
             `Managers listed: ${stats.managers.length}`));
         panel.appendChild(button('Start', () => startAutomation(), 'green'));
         panel.appendChild(button('Stop', () => stopAutomation(), 'red'));
         panel.appendChild(button('Settings', () => { panelView = 'settings'; update_panel(true); }));
         panel.appendChild(button('History', () => { panelView = 'history'; update_panel(true); }));
+        panel.appendChild(button(is_silver() ? 'Switch to Bronze' : 'Switch to Silver', () => {
+            if (isRunning) {
+                set_status('Stop the bot before switching mode');
+                return;
+            }
+            settings.MODE = is_silver() ? 'bronze' : 'silver';
+            save_json(STORAGE_SETTINGS, settings);
+            stats = new_stats();
+            set_status(`Switched to ${is_silver() ? 'Silver' : 'Bronze'} mode: ${pack_title()}`);
+        }));
     }
 
     function render_settings() {
@@ -962,7 +1185,7 @@
                 }
             }
             if (!(next.DELAY_MULTIPLIER > 0)) next.DELAY_MULTIPLIER = DEFAULT_SETTINGS.DELAY_MULTIPLIER;
-            settings = Object.assign({}, DEFAULT_SETTINGS, next);
+            settings = Object.assign({}, DEFAULT_SETTINGS, { MODE: settings.MODE }, next);
             save_json(STORAGE_SETTINGS, settings);
             panelView = 'main';
             set_status('Settings saved');
@@ -1009,7 +1232,7 @@
         if (panelView !== 'main' && !force && panel.childElementCount) return;
 
         panel.textContent = '';
-        const title = el('div', 'font-weight:bold;margin-bottom:4px', 'Bronze Auto Opener' +
+        const title = el('div', 'font-weight:bold;margin-bottom:4px', 'Pack Auto Opener' +
             (panelView === 'settings' ? ': Settings' : panelView === 'history' ? ': History' : ''));
         if (SCRIPT_VERSION) title.appendChild(el('span', 'font-weight:normal;opacity:0.6;margin-left:6px', 'v' + SCRIPT_VERSION));
         panel.appendChild(title);

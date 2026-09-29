@@ -1,6 +1,9 @@
 # Bronze Pack Auto Opener (FC 27)
 
-Tampermonkey userscript that automates the bronze pack method on the EA SPORTS FC 27 Ultimate Team web app.
+Tampermonkey userscript that automates opening packs on the EA SPORTS FC 27 Ultimate Team web app, in two modes:
+
+- **Bronze:** opens Large Bronze Packs, stores new players in the club, keeps valuable managers, redeems coins and quick sells the rest.
+- **Silver:** opens Large Silver Packs and lists every player on the transfer market one price step under the cheapest Buy Now. Players worth less than your threshold are quick sold instead.
 By Kogilife.
 
 ## Install in Tampermonkey
@@ -23,13 +26,24 @@ By Kogilife.
 
 The panel shows live progress, including profit. Set `SHOW_PANEL = false` in the script to hide it.
 
+## Silver mode
+
+Click **Switch to Silver** on the panel (while the bot is stopped). For each player the bot:
+1. presses **Compare Price** and reads the cheapest Buy Now,
+2. if that is under **Silver: quick sell if cheapest Buy Now is under** (default 400), or there are no listings, leaves the player to be quick sold,
+3. otherwise lists it for 1 hour: Buy Now one price step under the cheapest, Start Price one step below that.
+
+The first listing of each run asks you to confirm the player and prices. Check they look right, then click OK and it carries on without asking again. Each player costs one market search; EA temporarily blocks accounts that search too much, so keep runs reasonable. If the transfer list is full (100), the bot stops instead of quick selling.
+
 ## Settings
 
 Click **Settings** on the panel, change what you want, and click **Save**. Settings are saved in your browser, so pasting in a new version of the script does not reset them. **Reset to defaults** goes back to the values in the script.
 
 | Setting | What it does |
 | --- | --- |
-| Pack name | Pack to open, as shown in the store (default "Large Bronze Pack") |
+| Bronze mode pack name | Pack to open in bronze mode (default "Large Bronze Pack") |
+| Silver mode pack name | Pack to open in silver mode (default "Large Silver Pack") |
+| Silver: quick sell if cheapest Buy Now is under | Silver players cheaper than this are quick sold instead of listed (default 400) |
 | Max packs | Stop after this many packs. `0` = no limit |
 | Max minutes | Stop after this many minutes. `0` = no limit |
 | Max coins to spend | Most coins spent on packs each run. Example: `15000` stops after 20 packs at 750 |
@@ -54,6 +68,11 @@ The bot stops, instead of quick selling something valuable, when:
 ## Changelog
 
 The version shows next to the panel title and in the console (F12) when the script loads.
+
+### 2026.2.0
+- New silver mode: opens Large Silver Packs and lists each player on the transfer market one price step under the cheapest Buy Now (1 hour), found with Compare Price. Cheap players (under a threshold you set) and players with no listings are quick sold. The first listing each run asks you to confirm.
+- **Switch to Silver / Bronze** button on the panel; each mode has its own pack name in Settings.
+- The summary shows the mode, players listed with their total Buy Now, players quick sold as too cheap, and price searches used.
 
 ### 2026.1.6
 - Faster "Going back to the packs": it waits for the store's tabs instead of the pack itself, so it no longer sits for up to 15 seconds when the store comes back on another tab.
