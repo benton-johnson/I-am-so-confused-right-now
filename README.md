@@ -55,6 +55,10 @@ The bot stops, instead of quick selling something valuable, when:
 
 The version shows next to the panel title and in the console (F12) when the script loads.
 
+### 2026.1.6
+- Faster "Going back to the packs": it waits for the store's tabs instead of the pack itself, so it no longer sits for up to 15 seconds when the store comes back on another tab.
+- Faster player storing: about 0.4 seconds per player instead of about 1.6. The bot still checks each card has left the list before moving on.
+
 ### 2026.1.5
 - Faster: the wait for the store before each buy is cut from about 1.75 seconds to 0.4 seconds.
 

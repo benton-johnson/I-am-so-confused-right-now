@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bronze Pack Auto Opener (FC 27)
 // @namespace    http://tampermonkey.net/
-// @version      2026.1.5
+// @version      2026.1.6
 // @description  Automate bronze pack method opening on the FC 27 web app
 // @author       Kogilife
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
@@ -390,13 +390,12 @@
             let store_btn = null;
             for (let tries = 0; tries < 5 && !store_btn; tries++) {
                 simulateFullClick(player);
-                await poll(300); // let the card details switch over first
-                for (let waited = 0; waited < 1000 && !store_btn; waited += 100) {
-                    await poll(100);
+                await poll(150); // let the card details switch over first
+                for (let waited = 0; waited < 1000 && !store_btn; waited += 50) {
                     store_btn = find_send_to_club_button();
+                    if (!store_btn) await poll(50);
                 }
             }
-            await delay(DEFAULT_FAST_DELAY * 10); // short pause before clicking
             if (!store_btn) {
                 console.log('No Send to Club button for ' + playerName + ', skipping it');
                 skip.add(container);
@@ -408,12 +407,12 @@
 
             // wait until the card actually leaves the unassigned list
             let stored = false;
-            for (let waited = 0; waited < 3000; waited += 100) {
+            for (let waited = 0; waited < 3000; waited += 50) {
                 if (!document.contains(container) || non_duplicate_players(skip).length < countBefore) {
                     stored = true;
                     break;
                 }
-                await poll(100);
+                await poll(50);
             }
 
             if (stored) {
@@ -423,7 +422,7 @@
                 console.log('Card did not leave the list, skipping it: ' + playerName);
                 skip.add(container);
             }
-            await delay(DEFAULT_LONG_DELAY); // let the list re-render
+            await poll(200); // let the list re-render
         }
 
         stats.players += processedCount;
@@ -772,7 +771,12 @@
                 simulateFullClick(visible_all('.ut-navigation-button-control')[0]);
             }
             await waitForSpinner();
-            await wait_for_store_to_settle();
+            // wait for the store's tab bar (or the pack) to show; the Classic Packs tab
+            // is picked right after this, so don't wait for the pack itself
+            for (let waited = 0; waited < 10000; waited += 50) {
+                if (visible_all('.ea-filter-bar-item-view').length || is_visible(find_bronze_pack())) break;
+                await poll(50);
+            }
         }
         return 'Stopped by you.';
     }
