@@ -1,7 +1,7 @@
 # Bronze Pack Auto Opener (FC 27)
 
 Tampermonkey userscript that automates the bronze pack method on the EA SPORTS FC 27 Ultimate Team web app.
-Ported from the FC 26 script by metaHC.
+By Kogilife. Ported from the FC 26 script by metaHC.
 
 ## Install in Tampermonkey
 

@@ -3,7 +3,7 @@
 // @namespace    http://tampermonkey.net/
 // @version      2026.1.0
 // @description  Automate bronze pack method opening on the FC 27 web app
-// @author       metaHC (FC 27 port)
+// @author       Kogilife
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
 // @match        https://www.ea.com/ea-sports-fc/ultimate-team/web-app/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=ea.com
