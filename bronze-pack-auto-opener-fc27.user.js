@@ -775,11 +775,16 @@
         return node;
     }
 
-    const BUTTON_STYLE = 'margin:6px 6px 0 0;padding:3px 10px;cursor:pointer;font:12px sans-serif;';
-    const INPUT_STYLE = 'width:100%;box-sizing:border-box;margin:2px 0 6px;padding:3px;font:12px sans-serif;color:#000;background:#fff;border:1px solid #888;border-radius:3px;';
+    // !important so the web app's own button styles can't override these
+    const BUTTON_STYLE = 'margin:6px 6px 0 0 !important;padding:4px 10px !important;cursor:pointer !important;' +
+        'font:bold 12px sans-serif !important;color:#fff !important;border:none !important;border-radius:4px !important;' +
+        'opacity:1 !important;text-shadow:none !important;box-shadow:none !important;';
+    const BUTTON_COLORS = { green: '#1f9d55', red: '#d64545', blue: '#2f6fed', grey: '#4a5568' };
+    const INPUT_STYLE = 'width:100% !important;box-sizing:border-box !important;margin:2px 0 6px !important;padding:3px !important;' +
+        'font:12px sans-serif !important;color:#000 !important;background:#fff !important;border:1px solid #888 !important;border-radius:3px !important;';
 
-    function button(label, onClick) {
-        const b = el('button', BUTTON_STYLE, label);
+    function button(label, onClick, color) {
+        const b = el('button', BUTTON_STYLE + `background:${BUTTON_COLORS[color || 'grey']} !important;`, label);
         b.addEventListener('click', onClick);
         return b;
     }
@@ -805,8 +810,8 @@
             `Profit: ${profit == null ? '-' : format_coins(profit)}\n` +
             `Players stored: ${stats.players}\n` +
             `Managers listed: ${stats.managers.length}`));
-        panel.appendChild(button('Start', () => startAutomation()));
-        panel.appendChild(button('Stop', () => stopAutomation()));
+        panel.appendChild(button('Start', () => startAutomation(), 'green'));
+        panel.appendChild(button('Stop', () => stopAutomation(), 'red'));
         panel.appendChild(button('Settings', () => { panelView = 'settings'; update_panel(true); }));
         panel.appendChild(button('History', () => { panelView = 'history'; update_panel(true); }));
     }
@@ -843,7 +848,7 @@
             save_json(STORAGE_SETTINGS, settings);
             panelView = 'main';
             set_status('Settings saved');
-        }));
+        }, 'blue'));
         panel.appendChild(button('Reset to defaults', () => {
             settings = Object.assign({}, DEFAULT_SETTINGS);
             save_json(STORAGE_SETTINGS, settings);
