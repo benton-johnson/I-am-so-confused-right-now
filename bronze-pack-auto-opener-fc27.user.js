@@ -21,24 +21,27 @@
     // SETTINGS: if EA renames something in FC 27, fix it here first.
     // ------------------------------------------------------------------
     const CLASSIC_PACKS_TAB_NAME = "Classic Packs";
-    const BRONZE_PACK_TITLE = "Large Bronze Pack";
     const BIO_COUNTRY_LABEL = "Country/Region";
 
-    // COIN LIMITS (0 = no limit)
-    // most coins to spend on packs each time you press "-"
-    const MAX_COINS_TO_SPEND = 0;
-    // never buy a pack if it would take your balance below this
-    const STOP_WHEN_COINS_BELOW = 0;
+    // DEFAULT SETTINGS. You can change all of these in the panel's Settings tab
+    // instead; what you save there is kept in your browser and survives script updates.
+    const DEFAULT_SETTINGS = {
+        BRONZE_PACK_TITLE: "Large Bronze Pack",
+        // coin limits (0 = no limit)
+        MAX_COINS_TO_SPEND: 0,       // most coins to spend on packs each time you press "-"
+        STOP_WHEN_COINS_BELOW: 0,    // never buy a pack if it would take your balance below this
+        // run limits (0 = no limit)
+        MAX_PACKS: 0,                // stop after opening this many packs
+        MAX_MINUTES: 0,              // stop after running this many minutes
+        // speed: every wait is multiplied by this. 1 = original, 2 = half speed.
+        DELAY_MULTIPLIER: 2.5,
+        // managers from these countries are expensive, so they go to the transfer list
+        // instead of being quick sold. Spelling must match the game exactly.
+        important_manager_countries: ["Georgia", "Malawi", "Ivory Coast", "Cameroon", "Nigeria", "France", "Egypt", "Portugal"],
+    };
+
     // where the web app shows your coin balance (first one found is used)
     const COIN_BALANCE_SELECTORS = ['.view-navbar-currency-coins', '.view-navbar-currency .coins', '.ut-navbar-currency-coins'];
-
-    // SPEED: every wait is multiplied by this. 1 = normal, 1.5 = 50% slower, 2 = half speed.
-    // Raise it if the web app lags and the bot clicks before a screen has loaded.
-    const DELAY_MULTIPLIER = 2.5;
-
-    // RUN LIMITS (0 = no limit)
-    const MAX_PACKS = 0;      // stop after opening this many packs
-    const MAX_MINUTES = 0;    // stop after running this many minutes
 
     // show the status panel with Start / Stop buttons in the bottom right
     const SHOW_PANEL = true;
@@ -47,9 +50,32 @@
     const DEFAULT_FAST_DELAY = 10;
     const DEFAULT_LONG_DELAY = 300;
     const SPINNER_TIMEOUT = 10000;
-    let important_manager_countries = ["Georgia", "Malawi", "Ivory Coast", "Cameroon", "Nigeria", "France", "Egypt", "Portugal"];
-    // managers from these countries are expensive, so they go to the transfer list instead of being quick sold
-    // just make sure that the game spells it exactly the same (capital letters, space)
+
+    // ------------------------------------------------------------------
+    // saved data (kept in this browser only)
+    // ------------------------------------------------------------------
+    const STORAGE_SETTINGS = 'bpao-settings';
+    const STORAGE_HISTORY = 'bpao-history';
+    const STORAGE_TOTALS = 'bpao-totals';
+
+    function load_json(key, fallback) {
+        try {
+            const raw = localStorage.getItem(key);
+            return raw ? JSON.parse(raw) : fallback;
+        } catch (err) {
+            return fallback;
+        }
+    }
+
+    function save_json(key, value) {
+        try {
+            localStorage.setItem(key, JSON.stringify(value));
+        } catch (err) {
+            console.warn('Could not save ' + key, err);
+        }
+    }
+
+    let settings = Object.assign({}, DEFAULT_SETTINGS, load_json(STORAGE_SETTINGS, {}));
 
     // global selectors
     const unassigned_section = '.ut-unassigned-view .entityContainer';
@@ -63,11 +89,16 @@
     let status = 'Idle';
 
     function new_stats() {
-        return { packs: 0, players: 0, redeemed: 0, managers: [], startTime: Date.now(), started: false };
+        return { packs: 0, players: 0, redeemed: 0, managers: [], startTime: Date.now(), started: false, startBalance: null };
+    }
+
+    // for "is it done yet?" checks: always real time, not slowed by the speed setting
+    function poll(ms) {
+        return new Promise(res => setTimeout(res, ms));
     }
 
     function delay(ms) {
-        return new Promise(res => setTimeout(res, ms * DELAY_MULTIPLIER));
+        return new Promise(res => setTimeout(res, ms * settings.DELAY_MULTIPLIER));
     }
 
     function text(el) {
@@ -97,7 +128,7 @@
                 console.warn('Spinner timeout');
                 return false;
             }
-            await delay(200);
+            await poll(200);
         }
         return true;
     }
@@ -158,7 +189,7 @@
     function find_bronze_pack() {
         // 1. pack element tagged with the name (how FC 26 did it)
         const by_attribute = Array.from(document.querySelectorAll('[data-title]'))
-            .filter(el => same_name(el.getAttribute('data-title'), BRONZE_PACK_TITLE));
+            .filter(el => same_name(el.getAttribute('data-title'), settings.BRONZE_PACK_TITLE));
         if (by_attribute.length) return pick_pack(by_attribute);
 
         // 2. fall back to the name shown on screen: find the text, then walk up to the
@@ -166,7 +197,7 @@
         const found = [];
         const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
         while (walker.nextNode()) {
-            if (!same_name(walker.currentNode.textContent, BRONZE_PACK_TITLE)) continue;
+            if (!same_name(walker.currentNode.textContent, settings.BRONZE_PACK_TITLE)) continue;
             let el = walker.currentNode.parentElement;
             while (el && el !== document.body && !find_coin_button(el)) {
                 el = el.parentElement;
@@ -176,7 +207,7 @@
         return pick_pack(found);
     }
 
-    // logs every pack name the script can see, to help fix BRONZE_PACK_TITLE
+    // logs every pack name the script can see, to help fix the pack name setting
     function log_visible_packs() {
         const titles = Array.from(document.querySelectorAll('[data-title]'))
             .map(el => el.getAttribute('data-title'));
@@ -202,21 +233,21 @@
 
     // throws (which stops the bot) if buying one more pack would break a coin limit
     function check_coin_limits(price) {
-        if (!MAX_COINS_TO_SPEND && !STOP_WHEN_COINS_BELOW) return;
+        if (!settings.MAX_COINS_TO_SPEND && !settings.STOP_WHEN_COINS_BELOW) return;
 
         if (price == null) {
             throw new Error("Couldn't read the pack price, so I can't check your coin limits.");
         }
-        if (MAX_COINS_TO_SPEND && coinsSpent + price > MAX_COINS_TO_SPEND) {
-            throw new Error(`Coin limit reached: spent ${coinsSpent.toLocaleString()} of ${MAX_COINS_TO_SPEND.toLocaleString()} coins. Another pack costs ${price.toLocaleString()}.`);
+        if (settings.MAX_COINS_TO_SPEND && coinsSpent + price > settings.MAX_COINS_TO_SPEND) {
+            throw new Error(`Coin limit reached: spent ${coinsSpent.toLocaleString()} of ${settings.MAX_COINS_TO_SPEND.toLocaleString()} coins. Another pack costs ${price.toLocaleString()}.`);
         }
-        if (STOP_WHEN_COINS_BELOW) {
+        if (settings.STOP_WHEN_COINS_BELOW) {
             const balance = read_coin_balance();
             if (balance == null) {
                 throw new Error("Couldn't read your coin balance. Check COIN_BALANCE_SELECTORS at the top of the script.");
             }
-            if (balance - price < STOP_WHEN_COINS_BELOW) {
-                throw new Error(`Stopped to keep at least ${STOP_WHEN_COINS_BELOW.toLocaleString()} coins. Balance is ${balance.toLocaleString()} and a pack costs ${price.toLocaleString()}.`);
+            if (balance - price < settings.STOP_WHEN_COINS_BELOW) {
+                throw new Error(`Stopped to keep at least ${settings.STOP_WHEN_COINS_BELOW.toLocaleString()} coins. Balance is ${balance.toLocaleString()} and a pack costs ${price.toLocaleString()}.`);
             }
         }
     }
@@ -226,7 +257,7 @@
         if (!bronze_pack) {
             const titles = log_visible_packs();
             const hint = titles.length ? ` Packs I can see: ${titles.join(', ')}.` : ' Scroll down so the pack is on screen, then try again.';
-            throw new Error(`Could not find "${BRONZE_PACK_TITLE}".${hint} See the console (F12) for details.`);
+            throw new Error(`Could not find "${settings.BRONZE_PACK_TITLE}".${hint} See the console (F12) for details.`);
         }
         const open_button = find_coin_button(bronze_pack);
         if (!open_button) {
@@ -240,7 +271,7 @@
         for (let tries = 0; tries < 5 && document.querySelector(message_dialog_selector) == null; tries++) {
             simulateFullClick(open_button);
             for (let waited = 0; waited < 1500 && document.querySelector(message_dialog_selector) == null; waited += 100) {
-                await delay(100);
+                await poll(100);
             }
         }
         if (document.querySelector(message_dialog_selector) == null) {
@@ -257,7 +288,7 @@
 
         if (price != null) {
             coinsSpent += price;
-            const budget = MAX_COINS_TO_SPEND ? ` of ${MAX_COINS_TO_SPEND.toLocaleString()}` : '';
+            const budget = settings.MAX_COINS_TO_SPEND ? ` of ${settings.MAX_COINS_TO_SPEND.toLocaleString()}` : '';
             console.log(`Coins spent this run: ${coinsSpent.toLocaleString()}${budget}`);
         }
     }
@@ -294,11 +325,15 @@
 
             // select the card, then wait for its Send to Club button
             let store_btn = null;
-            for (let tries = 0; tries < 10 && !store_btn; tries++) {
+            for (let tries = 0; tries < 5 && !store_btn; tries++) {
                 simulateFullClick(player);
-                await delay(DEFAULT_LONG_DELAY);
-                store_btn = find_send_to_club_button();
+                await poll(300); // let the card details switch over first
+                for (let waited = 0; waited < 1000 && !store_btn; waited += 100) {
+                    await poll(100);
+                    store_btn = find_send_to_club_button();
+                }
             }
+            await delay(DEFAULT_FAST_DELAY * 10); // short pause before clicking
             if (!store_btn) {
                 console.log('No Send to Club button for ' + playerName + ', skipping it');
                 skip.add(container);
@@ -315,7 +350,7 @@
                     stored = true;
                     break;
                 }
-                await delay(100);
+                await poll(100);
             }
 
             if (stored) {
@@ -374,11 +409,12 @@
             simulateFullClick(back_button);
             await delay(DEFAULT_LONG_DELAY);
 
-            if (country == null || !important_manager_countries.includes(country)) {
+            if (country == null || !settings.important_manager_countries.includes(country)) {
                 index++;
                 continue;
             }
 
+            const manager_name = text(manager.closest('.entityContainer')?.querySelector('.name'));
             const countBefore = unassigned_managers().length;
             const send_button = document.querySelector('.send-to-transfer-list');
             if (!send_button || send_button.disabled || send_button.classList.contains('disabled')) {
@@ -394,12 +430,13 @@
                     sent = true;
                     break;
                 }
-                await delay(100);
+                await poll(100);
             }
             if (!sent) {
                 throw new Error(`A ${country} manager didn't go to the transfer list (it may be full, max 100). I stopped so it doesn't get quick sold. Make room, then press "-" again.`);
             }
             stats.managers.push(country);
+            add_to_history(country, manager_name);
             update_panel();
             console.log('Sent ' + country + ' manager to the transfer list');
             await delay(DEFAULT_LONG_DELAY);
@@ -414,12 +451,12 @@
             .find(b => /^redeem/i.test(text(b)) && !b.disabled && b.offsetParent !== null) || null;
     }
 
-    // non player, non manager items still in unassigned (coins, consumables, ...)
-    function unassigned_items(skip) {
+    // coin cards and other misc items still in unassigned (not players, managers or consumables)
+    function redeemable_items() {
         return Array.from(document.querySelectorAll(unassigned_section)).filter(c =>
-            !skip.has(c) &&
             !c.querySelector('.player') &&
-            !c.querySelector('.manager, .staff'));
+            !c.querySelector('.manager, .staff') &&
+            (c.querySelector('.misc') || /coin/i.test(text(c))));
     }
 
     // clicks OK on a popup if one opened (e.g. a redeem confirmation)
@@ -444,24 +481,25 @@
         }
         await delay(DEFAULT_LONG_DELAY); // small buffer
 
-        const skip = new Set();
         let redeemed = 0;
+        // items without a Redeem button stay in the list, so walk it by position
+        let index = 0;
 
-        for (let round = 0; round < 30 && isRunning; round++) {
-            const items = unassigned_items(skip);
-            if (items.length === 0) break;
+        for (let round = 0; round < 20 && isRunning; round++) {
+            const items = redeemable_items();
+            if (index >= items.length) break;
 
-            const item = items[0];
+            const item = items[index];
             const countBefore = items.length;
 
+            simulateFullClick(item.querySelector('.misc') || item.firstElementChild || item);
             let redeem_button = null;
-            for (let tries = 0; tries < 5 && !redeem_button; tries++) {
-                simulateFullClick(item.querySelector('.misc') || item.firstElementChild || item);
-                await delay(DEFAULT_LONG_DELAY);
+            for (let waited = 0; waited < 1500 && !redeem_button; waited += 100) {
+                await poll(100);
                 redeem_button = find_redeem_button();
             }
             if (!redeem_button) {
-                skip.add(item); // not redeemable (e.g. a consumable), quick sell handles it
+                index++; // not redeemable, quick sell handles it
                 continue;
             }
 
@@ -479,24 +517,24 @@
             // wait until the item actually leaves the list
             let gone = false;
             for (let waited = 0; waited < 3000; waited += 100) {
-                if (!document.contains(item) || unassigned_items(skip).length < countBefore) {
+                if (redeemable_items().length < countBefore) {
                     gone = true;
                     break;
                 }
-                await delay(100);
+                await poll(100);
             }
             if (gone) {
                 redeemed++;
                 stats.redeemed++;
                 update_panel();
             } else {
-                skip.add(item);
+                index++;
             }
             await delay(DEFAULT_LONG_DELAY);
         }
 
         // a coin card that is still here would make quick sell fail
-        const stuck = unassigned_items(new Set()).filter(c => /coin/i.test(c.className + ' ' + text(c)));
+        const stuck = redeemable_items().filter(c => /coin/i.test(c.className + ' ' + text(c)));
         if (stuck.length) {
             throw new Error("A coin card couldn't be redeemed, so I stopped before quick selling. Redeem it by hand, then press \"-\" again.");
         }
@@ -591,11 +629,11 @@
 
         stats.started = true;
         while (isRunning) {
-            if (MAX_PACKS && stats.packs >= MAX_PACKS) {
-                return `Pack limit reached (${MAX_PACKS} packs).`;
+            if (settings.MAX_PACKS && stats.packs >= settings.MAX_PACKS) {
+                return `Pack limit reached (${settings.MAX_PACKS} packs).`;
             }
-            if (MAX_MINUTES && Date.now() - stats.startTime >= MAX_MINUTES * 60000) {
-                return `Time limit reached (${MAX_MINUTES} minutes).`;
+            if (settings.MAX_MINUTES && Date.now() - stats.startTime >= settings.MAX_MINUTES * 60000) {
+                return `Time limit reached (${settings.MAX_MINUTES} minutes).`;
             }
 
             if (!(await select_classic_packs())) {
@@ -630,6 +668,7 @@
         isRunning = true;
         coinsSpent = 0;
         stats = new_stats();
+        stats.startBalance = read_coin_balance();
         set_status('Running');
         console.log('Bronze Pack Auto Opener started');
         let reason = '';
@@ -645,31 +684,83 @@
             console.log('Bronze Pack Auto Opener stopped');
         }
         if (stats.started) {
-            const summary = run_summary();
+            await delay(DEFAULT_LONG_DELAY); // let the balance catch up after the last quick sell
+            const profit = current_profit();
+            add_to_totals(profit);
+            const summary = run_summary(profit);
             console.log(summary);
+            update_panel();
             alert('Bronze Pack Auto Opener stopped: ' + reason + '\n\n' + summary);
         }
     }
 
-    function run_summary() {
+    function format_coins(n) {
+        return (n > 0 ? '+' : '') + n.toLocaleString();
+    }
+
+    // coins now minus coins at the start of the run, or null if the balance can't be read
+    function current_profit() {
+        const now = read_coin_balance();
+        return stats.startBalance == null || now == null ? null : now - stats.startBalance;
+    }
+
+    function run_summary(profit) {
         const minutes = Math.round((Date.now() - stats.startTime) / 60000);
         const managers = stats.managers.length
             ? `${stats.managers.length} (${stats.managers.join(', ')})`
             : '0';
-        return [
+        const profitLine = profit == null
+            ? "Profit: couldn't read your coin balance"
+            : `Profit: ${format_coins(profit)} coins (${stats.startBalance.toLocaleString()} to ${(stats.startBalance + profit).toLocaleString()})`;
+        const lines = [
             `Packs opened: ${stats.packs}`,
             `Coins spent on packs: ${coinsSpent.toLocaleString()}`,
+            profitLine,
             `Players stored in club: ${stats.players}`,
             `Items redeemed: ${stats.redeemed}`,
             `Managers sent to transfer list: ${managers}`,
             `Time: ${minutes} min`,
-        ].join('\n');
+        ];
+        if (stats.managers.length) {
+            lines.push('', 'Profit does not include the managers on your transfer list until they sell.');
+        }
+        return lines.join('\n');
+    }
+
+    // ------------------------------------------------------------------
+    // pull history and all time totals
+    // ------------------------------------------------------------------
+    function add_to_history(country, name) {
+        const history = load_json(STORAGE_HISTORY, []);
+        history.unshift({ date: new Date().toISOString(), country: country, name: name || '' });
+        save_json(STORAGE_HISTORY, history.slice(0, 200));
+    }
+
+    function add_to_totals(profit) {
+        const totals = load_json(STORAGE_TOTALS, { runs: 0, packs: 0, spent: 0, profit: 0, managers: 0 });
+        totals.runs++;
+        totals.packs += stats.packs;
+        totals.spent += coinsSpent;
+        totals.managers += stats.managers.length;
+        if (profit != null) totals.profit += profit;
+        save_json(STORAGE_TOTALS, totals);
     }
 
     // ------------------------------------------------------------------
     // status panel
     // ------------------------------------------------------------------
     let panel = null;
+    let panelView = 'main'; // 'main', 'settings' or 'history'
+
+    const SETTING_FIELDS = [
+        ['BRONZE_PACK_TITLE', 'Pack name', 'text'],
+        ['MAX_PACKS', 'Max packs (0 = no limit)', 'number'],
+        ['MAX_MINUTES', 'Max minutes (0 = no limit)', 'number'],
+        ['MAX_COINS_TO_SPEND', 'Max coins to spend (0 = no limit)', 'number'],
+        ['STOP_WHEN_COINS_BELOW', 'Keep at least this many coins', 'number'],
+        ['DELAY_MULTIPLIER', 'Speed (1 = original, 2 = half speed)', 'number'],
+        ['important_manager_countries', 'Manager countries to keep (comma separated)', 'list'],
+    ];
 
     function set_status(message) {
         status = message;
@@ -677,37 +768,129 @@
         update_panel();
     }
 
-    function build_panel() {
-        panel = document.createElement('div');
-        panel.id = 'bpao-panel';
-        panel.style.cssText = 'position:fixed;right:12px;bottom:12px;z-index:2147483647;width:230px;' +
-            'padding:10px 12px;border-radius:8px;background:rgba(15,20,30,0.92);color:#fff;' +
-            'font:12px/1.5 sans-serif;box-shadow:0 4px 16px rgba(0,0,0,0.4);';
-        panel.innerHTML =
-            '<div style="font-weight:bold;margin-bottom:4px">Bronze Auto Opener</div>' +
-            '<div data-bpao="status"></div>' +
-            '<div data-bpao="stats" style="margin:6px 0;white-space:pre-line;opacity:0.85"></div>' +
-            '<button data-bpao="start" style="margin-right:6px;padding:3px 12px;cursor:pointer">Start</button>' +
-            '<button data-bpao="stop" style="padding:3px 12px;cursor:pointer">Stop</button>';
-        // keep panel clicks away from the web app
-        ['mousedown', 'mouseup', 'click'].forEach(type => panel.addEventListener(type, e => e.stopPropagation()));
-        panel.querySelector('[data-bpao="start"]').addEventListener('click', () => startAutomation());
-        panel.querySelector('[data-bpao="stop"]').addEventListener('click', () => stopAutomation());
+    function el(tag, style, textValue) {
+        const node = document.createElement(tag);
+        if (style) node.style.cssText = style;
+        if (textValue != null) node.textContent = textValue;
+        return node;
     }
 
-    function update_panel() {
+    const BUTTON_STYLE = 'margin:6px 6px 0 0;padding:3px 10px;cursor:pointer;font:12px sans-serif;';
+    const INPUT_STYLE = 'width:100%;box-sizing:border-box;margin:2px 0 6px;padding:3px;font:12px sans-serif;color:#000;background:#fff;border:1px solid #888;border-radius:3px;';
+
+    function button(label, onClick) {
+        const b = el('button', BUTTON_STYLE, label);
+        b.addEventListener('click', onClick);
+        return b;
+    }
+
+    function build_panel() {
+        panel = el('div', 'position:fixed;right:12px;bottom:12px;z-index:2147483647;width:250px;max-height:80vh;overflow:auto;' +
+            'padding:10px 12px;border-radius:8px;background:rgba(15,20,30,0.94);color:#fff;' +
+            'font:12px/1.5 sans-serif;box-shadow:0 4px 16px rgba(0,0,0,0.4);');
+        panel.id = 'bpao-panel';
+        // keep panel clicks and typing away from the web app and the "-" / "=" keys
+        ['mousedown', 'mouseup', 'click', 'keydown', 'keyup', 'keypress'].forEach(type =>
+            panel.addEventListener(type, e => e.stopPropagation()));
+    }
+
+    function render_main() {
+        const budget = settings.MAX_COINS_TO_SPEND ? ` / ${settings.MAX_COINS_TO_SPEND.toLocaleString()}` : '';
+        const packs = settings.MAX_PACKS ? ` / ${settings.MAX_PACKS}` : '';
+        const profit = isRunning || stats.started ? current_profit() : null;
+        panel.appendChild(el('div', '', (isRunning ? 'Running: ' : '') + status));
+        panel.appendChild(el('div', 'margin:6px 0;white-space:pre-line;opacity:0.85',
+            `Packs: ${stats.packs}${packs}\n` +
+            `Coins spent: ${coinsSpent.toLocaleString()}${budget}\n` +
+            `Profit: ${profit == null ? '-' : format_coins(profit)}\n` +
+            `Players stored: ${stats.players}\n` +
+            `Managers listed: ${stats.managers.length}`));
+        panel.appendChild(button('Start', () => startAutomation()));
+        panel.appendChild(button('Stop', () => stopAutomation()));
+        panel.appendChild(button('Settings', () => { panelView = 'settings'; update_panel(true); }));
+        panel.appendChild(button('History', () => { panelView = 'history'; update_panel(true); }));
+    }
+
+    function render_settings() {
+        const inputs = {};
+        for (const [key, label, type] of SETTING_FIELDS) {
+            panel.appendChild(el('div', 'opacity:0.85', label));
+            const input = el(type === 'list' ? 'textarea' : 'input', INPUT_STYLE + (type === 'list' ? 'height:60px;' : ''));
+            if (type === 'number') {
+                input.type = 'number';
+                input.min = '0';
+                input.step = 'any';
+            }
+            input.value = type === 'list' ? settings[key].join(', ') : settings[key];
+            inputs[key] = input;
+            panel.appendChild(input);
+        }
+        panel.appendChild(button('Save', () => {
+            const next = {};
+            for (const [key, , type] of SETTING_FIELDS) {
+                const raw = inputs[key].value;
+                if (type === 'list') {
+                    next[key] = raw.split(',').map(x => x.trim()).filter(Boolean);
+                } else if (type === 'number') {
+                    const n = parseFloat(raw);
+                    next[key] = isFinite(n) && n >= 0 ? n : DEFAULT_SETTINGS[key];
+                } else {
+                    next[key] = raw.trim() || DEFAULT_SETTINGS[key];
+                }
+            }
+            if (!(next.DELAY_MULTIPLIER > 0)) next.DELAY_MULTIPLIER = DEFAULT_SETTINGS.DELAY_MULTIPLIER;
+            settings = Object.assign({}, DEFAULT_SETTINGS, next);
+            save_json(STORAGE_SETTINGS, settings);
+            panelView = 'main';
+            set_status('Settings saved');
+        }));
+        panel.appendChild(button('Reset to defaults', () => {
+            settings = Object.assign({}, DEFAULT_SETTINGS);
+            save_json(STORAGE_SETTINGS, settings);
+            update_panel(true);
+        }));
+        panel.appendChild(button('Back', () => { panelView = 'main'; update_panel(true); }));
+    }
+
+    function render_history() {
+        const totals = load_json(STORAGE_TOTALS, null);
+        panel.appendChild(el('div', 'white-space:pre-line;margin-bottom:6px;opacity:0.85', totals
+            ? `All time: ${totals.runs} runs, ${totals.packs} packs\n` +
+              `Spent: ${totals.spent.toLocaleString()}  Profit: ${format_coins(totals.profit)}\n` +
+              `Managers kept: ${totals.managers}`
+            : 'No runs yet.'));
+
+        const history = load_json(STORAGE_HISTORY, []);
+        panel.appendChild(el('div', 'font-weight:bold', `Valuable managers (${history.length})`));
+        if (!history.length) panel.appendChild(el('div', 'opacity:0.7', 'None yet.'));
+        for (const entry of history.slice(0, 50)) {
+            const when = new Date(entry.date).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+            panel.appendChild(el('div', 'border-top:1px solid rgba(255,255,255,0.1);padding:2px 0',
+                `${entry.country}${entry.name ? ' - ' + entry.name : ''} (${when})`));
+        }
+        panel.appendChild(button('Clear history', () => {
+            if (!confirm('Clear the manager history and all time totals?')) return;
+            save_json(STORAGE_HISTORY, []);
+            save_json(STORAGE_TOTALS, null);
+            update_panel(true);
+        }));
+        panel.appendChild(button('Back', () => { panelView = 'main'; update_panel(true); }));
+    }
+
+    // rebuild the panel. Settings and history only redraw when asked (force),
+    // so the 2 second refresh doesn't wipe what you're typing.
+    function update_panel(force) {
         if (!SHOW_PANEL || !document.body) return;
         if (!panel) build_panel();
         if (!document.body.contains(panel)) document.body.appendChild(panel);
+        if (panelView !== 'main' && !force && panel.childElementCount) return;
 
-        const budget = MAX_COINS_TO_SPEND ? ` / ${MAX_COINS_TO_SPEND.toLocaleString()}` : '';
-        const packs = MAX_PACKS ? ` / ${MAX_PACKS}` : '';
-        panel.querySelector('[data-bpao="status"]').textContent = (isRunning ? 'Running: ' : '') + status;
-        panel.querySelector('[data-bpao="stats"]').textContent =
-            `Packs: ${stats.packs}${packs}\n` +
-            `Coins spent: ${coinsSpent.toLocaleString()}${budget}\n` +
-            `Players stored: ${stats.players}\n` +
-            `Managers listed: ${stats.managers.length}`;
+        panel.textContent = '';
+        panel.appendChild(el('div', 'font-weight:bold;margin-bottom:4px', 'Bronze Auto Opener' +
+            (panelView === 'settings' ? ': Settings' : panelView === 'history' ? ': History' : '')));
+        if (panelView === 'settings') render_settings();
+        else if (panelView === 'history') render_history();
+        else render_main();
     }
 
     function stopAutomation() {

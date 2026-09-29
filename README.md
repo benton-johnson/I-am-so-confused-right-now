@@ -21,38 +21,35 @@ By Kogilife.
 3. Click **Stop** or press **`=`** (or `+`) to stop. It stops after the current step finishes.
 4. When it stops, a popup shows why and a summary: packs opened, coins spent, players stored, items redeemed, and which managers went to the transfer list.
 
-The panel shows live progress. Set `SHOW_PANEL = false` to hide it.
+The panel shows live progress, including profit. Set `SHOW_PANEL = false` in the script to hide it.
 
-## Speed
+## Settings
 
-`DELAY_MULTIPLIER` in the **SETTINGS** block scales every wait in the script. It is set to `2.5` (2.5 times slower than the original).
-Use `1` for the original speed, or `2` for half speed if the web app lags and the bot clicks before a screen has loaded.
-
-## Run limits
+Click **Settings** on the panel, change what you want, and click **Save**. Settings are saved in your browser, so pasting in a new version of the script does not reset them. **Reset to defaults** goes back to the values in the script.
 
 | Setting | What it does |
 | --- | --- |
-| `MAX_PACKS` | Stops after opening this many packs. `0` = no limit. |
-| `MAX_MINUTES` | Stops after running this many minutes. `0` = no limit. |
+| Pack name | Pack to open, as shown in the store (default "Large Bronze Pack") |
+| Max packs | Stop after this many packs. `0` = no limit |
+| Max minutes | Stop after this many minutes. `0` = no limit |
+| Max coins to spend | Most coins spent on packs each run. Example: `15000` stops after 20 packs at 750 |
+| Keep at least this many coins | Never buy a pack that would take your balance under this |
+| Speed | Multiplies every pause. `1` = original, `2.5` = default, higher = slower |
+| Manager countries to keep | Comma separated. Managers from these go to the transfer list instead of being quick sold. Spelling must match the game |
+
+If you get "Couldn't read your coin balance", right-click your coin total at the top of the web app, choose **Inspect**, and add its class to `COIN_BALANCE_SELECTORS` in the script.
+
+## Profit and history
+
+- The summary after each run shows your coin balance at the start and end, and the profit. It does not count managers on your transfer list until they sell.
+- Click **History** on the panel for all time totals (runs, packs, coins spent, profit) and a list of the valuable managers the bot has kept, with dates. **Clear history** resets it.
 
 ## Safety stops
 
 The bot stops, instead of quick selling something valuable, when:
 - a new player can't be sent to the club
 - a coin card can't be redeemed
-- a manager from `important_manager_countries` can't go to the transfer list (usually because it is full at 100 items)
-
-## Coin limits
-
-At the top of the script, in the **SETTINGS** block (0 means no limit):
-
-| Setting | What it does |
-| --- | --- |
-| `MAX_COINS_TO_SPEND` | Most coins the bot spends on packs each time you press `-`. Example: `15000` stops after 20 packs at 750. |
-| `STOP_WHEN_COINS_BELOW` | Never buys a pack that would take your balance under this. Example: `50000` keeps at least 50k. |
-
-When a limit is hit, the bot stops and a popup tells you why. The console (F12) shows how much it has spent after each pack.
-If you get "Couldn't read your coin balance", right-click your coin total at the top of the web app, choose **Inspect**, and add its class to `COIN_BALANCE_SELECTORS`.
+- a manager from your countries list can't go to the transfer list (usually because it is full at 100 items)
 
 ## What changed from the FC 26 version
 
@@ -70,9 +67,9 @@ EA sometimes renames things between years. Open the console (F12) to see where t
 | Setting | What to check |
 | --- | --- |
 | `CLASSIC_PACKS_TAB_NAME` | Exact text of the pack tab (e.g. "Classic Packs") |
-| `BRONZE_PACK_TITLE` | Pack name as shown in the store. If it can't be found, the error and the console (F12) list the pack names the script can see |
 | `BIO_COUNTRY_LABEL` | Label shown on a manager's bio for country |
-| `important_manager_countries` | Countries to send to the transfer list; spelling must match the game |
+
+If the pack can't be found, the error and the console (F12) list the pack names the script can see; set the right one in the panel's Settings.
 
 If a whole CSS class was renamed (for example `.send-to-club`), right-click that button in the web app, choose **Inspect**, and update the matching selector in the script.
 
