@@ -69,6 +69,10 @@ The bot stops, instead of quick selling something valuable, when:
 
 The version shows next to the panel title and in the console (F12) when the script loads.
 
+### 2026.2.1
+- Fixed silver mode leaving everything unassigned: after Compare Price it pressed the top back arrow, which left the unassigned screen for the store. When the results open next to the list, it now just selects the card again; it only uses a back arrow when the results replace the whole screen.
+- If silver mode can't get back to the unassigned list, it stops instead of carrying on to the next pack.
+
 ### 2026.2.0
 - New silver mode: opens Large Silver Packs and lists each player on the transfer market one price step under the cheapest Buy Now (1 hour), found with Compare Price. Cheap players (under a threshold you set) and players with no listings are quick sold. The first listing each run asks you to confirm.
 - **Switch to Silver / Bronze** button on the panel; each mode has its own pack name in Settings.

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bronze Pack Auto Opener (FC 27)
 // @namespace    http://tampermonkey.net/
-// @version      2026.2.0
+// @version      2026.2.1
 // @description  Automate bronze pack method opening on the FC 27 web app
 // @author       Kogilife
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
@@ -672,9 +672,10 @@
 
     // presses Compare Price for the selected player and returns the cheapest Buy Now,
     // or null if there are no listings. Always returns to the unassigned list.
-    async function lowest_market_price(name) {
+    async function lowest_market_price(name, card) {
         const compare = find_button(/compare\s*price/i);
         if (!compare) throw new Error(`Couldn't find the Compare Price button for ${name}.`);
+        const backBefore = visible_all('.ut-navigation-button-control');
         simulateFullClick(compare);
         stats.searches++;
         await waitForSpinner();
@@ -691,14 +692,29 @@
         prices = compare_rows().map(row_buy_now).filter(Boolean);
         const lowest = prices.length ? Math.min(...prices) : null;
         console.log(`${name}: ${prices.length} market listings, lowest Buy Now ${lowest == null ? 'none' : lowest.toLocaleString()}`);
+        if (!prices.length) {
+            const rows = compare_rows();
+            console.log(`Compare Price: ${rows.length} result rows found` + (rows[0] ? `, first row: ${rows[0].className} | ${text(rows[0]).replace(/\s+/g, ' ').slice(0, 120)}` : ''));
+        }
 
         // back to the unassigned list
-        simulateFullClick(visible_all('.ut-navigation-button-control')[0]);
-        for (let waited = 0; waited < 8000 && !visible_all(unassigned_section).length; waited += 100) {
-            await poll(100);
+        if (visible_all(unassigned_section).length) {
+            // results opened next to the list (desktop layout): the top back arrow would
+            // leave the unassigned screen, so just select the card again instead
+            simulateFullClick(card);
+        } else {
+            // results replaced the list: use the back arrow that came with them if there is one
+            const newBack = visible_all('.ut-navigation-button-control').find(b => !backBefore.includes(b));
+            simulateFullClick(newBack || visible_all('.ut-navigation-button-control')[0]);
+            for (let waited = 0; waited < 8000 && !visible_all(unassigned_section).length; waited += 100) {
+                await poll(100);
+            }
         }
         await waitForSpinner();
         await delay(DEFAULT_LONG_DELAY);
+        if (!visible_all(unassigned_section).length) {
+            throw new Error(`Couldn't get back to the unassigned list after Compare Price for ${name}. I stopped so nothing is left behind. Go back to Unassigned by hand, then send Claude a screenshot of the Compare Price screen.`);
+        }
         return lowest;
     }
 
@@ -792,7 +808,7 @@
             simulateFullClick(player);
             await poll(300);
 
-            const lowest = await lowest_market_price(name);
+            const lowest = await lowest_market_price(name, player);
             if (lowest == null || lowest < settings.SILVER_MIN_LIST_PRICE) {
                 console.log(`${name}: ${lowest == null ? 'no listings' : 'under ' + settings.SILVER_MIN_LIST_PRICE} , leaving it for quick sell`);
                 stats.cheap++;
