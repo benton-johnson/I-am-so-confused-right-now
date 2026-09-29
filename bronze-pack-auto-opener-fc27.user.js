@@ -21,15 +21,15 @@
     // SETTINGS: if EA renames something in FC 27, fix it here first.
     // ------------------------------------------------------------------
     const CLASSIC_PACKS_TAB_NAME = "Classic Packs";
-    const BRONZE_PACK_TITLE = "Premium Bronze Pack";
+    const BRONZE_PACK_TITLE = "Large Bronze Pack";
     const BIO_COUNTRY_LABEL = "Country/Region";
 
     const MAX_RETRIES = 300;
     const DEFAULT_FAST_DELAY = 10;
     const DEFAULT_LONG_DELAY = 300;
     const SPINNER_TIMEOUT = 10000;
-    let important_manager_countries = ["Brazil", "England", "Canada", "Ecuador", "Ghana", "Japan", "Ukraine", "United States", "Uruguay", "Wales"];
-    // example important_manager_countries = ["Brazil", "Portugal", "Germany"];
+    let important_manager_countries = ["Georgia", "Malawi", "Ivory Coast", "Cameroon", "Nigeria", "France", "Egypt", "Portugal"];
+    // managers from these countries are expensive, so they go to the transfer list instead of being quick sold
     // just make sure that the game spells it exactly the same (capital letters, space)
 
     // global selectors
